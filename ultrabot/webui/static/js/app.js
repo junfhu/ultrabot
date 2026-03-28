@@ -751,10 +751,15 @@
      * @param {boolean} connected
      */
     function updateConnectionIndicator(connected) {
-        var indicator = document.getElementById("connection-status");
-        if (!indicator) return;
-        indicator.className = "status-dot " + (connected ? "connected" : "disconnected");
-        indicator.title = connected ? "Connected" : "Disconnected";
+        var wrapper = document.getElementById("connection-status");
+        if (!wrapper) return;
+        var dot = wrapper.querySelector(".status-dot");
+        if (!dot) {
+            // Fallback: indicator IS the dot.
+            dot = wrapper;
+        }
+        dot.className = "status-dot " + (connected ? "connected" : "disconnected");
+        wrapper.title = connected ? "Connected" : "Disconnected";
     }
 
     // =========================================================================
@@ -1412,7 +1417,42 @@
     }
 
     // =========================================================================
-    // Section 9: Sidebar & Layout Initialisation
+    // Section 9: Theme Toggle
+    // =========================================================================
+
+    /**
+     * Apply a theme ('light' or 'dark') to the document.
+     * @param {string} theme
+     */
+    function applyTheme(theme) {
+        document.documentElement.setAttribute("data-theme", theme);
+        localStorage.setItem("ultrabot-theme", theme);
+
+        var sunIcon = document.getElementById("theme-icon-sun");
+        var moonIcon = document.getElementById("theme-icon-moon");
+        var label = document.getElementById("theme-label");
+
+        if (theme === "dark") {
+            if (sunIcon) sunIcon.style.display = "none";
+            if (moonIcon) moonIcon.style.display = "";
+            if (label) label.textContent = "Dark";
+        } else {
+            if (sunIcon) sunIcon.style.display = "";
+            if (moonIcon) moonIcon.style.display = "none";
+            if (label) label.textContent = "Light";
+        }
+    }
+
+    /**
+     * Toggle between light and dark themes.
+     */
+    function toggleTheme() {
+        var current = document.documentElement.getAttribute("data-theme") || "light";
+        applyTheme(current === "dark" ? "light" : "dark");
+    }
+
+    // =========================================================================
+    // Section 10: Sidebar & Layout Initialisation
     // =========================================================================
 
     /**
@@ -1458,6 +1498,11 @@
                     '</a>' +
                 '</nav>' +
                 '<div class="sidebar-footer">' +
+                    '<button class="theme-btn" id="theme-toggle-btn" title="Toggle theme">' +
+                        '<svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>' +
+                        '<svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' +
+                        '<span id="theme-label">Light</span>' +
+                    '</button>' +
                     '<div class="sidebar-info">ultrabot v0.1.0</div>' +
                 '</div>' +
             '</aside>' +
@@ -1470,10 +1515,19 @@
                 navigateTo(item.dataset.page);
             });
         });
+
+        // Bind theme toggle.
+        var themeBtn = document.getElementById("theme-toggle-btn");
+        if (themeBtn) {
+            themeBtn.addEventListener("click", toggleTheme);
+        }
+
+        // Restore persisted theme.
+        applyTheme(localStorage.getItem("ultrabot-theme") || "light");
     }
 
     // =========================================================================
-    // Section 10: Initialisation
+    // Section 11: Initialisation
     // =========================================================================
 
     /**
@@ -1505,7 +1559,7 @@
     }
 
     // =========================================================================
-    // Section 11: Public API (attach to window for debugging / external use)
+    // Section 12: Public API (attach to window for debugging / external use)
     // =========================================================================
 
     window.UltrabotApp = {
@@ -1518,5 +1572,7 @@
         escapeHtml: escapeHtml,
         formatTimestamp: formatTimestamp,
         debounce: debounce,
+        toggleTheme: toggleTheme,
+        applyTheme: applyTheme,
     };
 })();
