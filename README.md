@@ -1,120 +1,122 @@
-# ultrabot: Robust Personal AI Assistant Framework
+# ultrabot：稳健的个人 AI 助手框架
 
-**ultrabot** is a feature-rich, production-grade personal AI assistant framework inspired by [nanobot](https://github.com/HKUDS/nanobot). It delivers the same core agent functionality with significantly stronger capabilities: circuit breaker failover, priority message queues, persistent sessions, parallel tool execution, hot-reloadable plugins, MCP support, a built-in security layer, and a 170-expert persona system across 17 professional domains.
+[English README](README_EN.md)
 
-## Key Features
+**ultrabot** 是一个功能丰富、可用于生产环境的个人 AI 助手框架，灵感来自 [nanobot](https://github.com/HKUDS/nanobot)。它保留了核心 Agent 能力，并在此基础上提供了更强的工程化特性：熔断与故障转移、优先级消息队列、持久化会话、并行工具执行、支持热重载的插件、MCP 支持、内置安全层，以及覆盖 17 个专业领域的 170 个专家人格系统。
 
-| Feature | Description |
-|---------|-------------|
-| **Circuit Breaker + Failover** | Automatic provider failover when an LLM goes down. Tracks failures, opens circuit, routes to healthy providers. |
-| **Priority Message Bus** | Priority-based async message queue with dead-letter handling for failed messages. |
-| **Persistent Sessions** | JSON-backed session storage with TTL eviction and token-aware context window trimming. |
-| **Parallel Tool Execution** | Multiple tool calls execute concurrently via `asyncio.gather` for faster agent loops. |
-| **Expert System** | 170 bundled domain-expert personas across 17 departments. Activate with `@slug`, sticky sessions, optional LLM auto-routing. |
-| **Hot-Reload Plugins** | Skills loaded from disk with hot-reload support. Drop a `SKILL.md` + tools and reload. |
-| **MCP Client** | Model Context Protocol support for stdio and HTTP transports. Connect external tool servers. |
-| **Security Layer** | Rate limiting (token bucket), access control per channel, input sanitization, blocked pattern detection. |
-| **Multi-Provider** | 12+ LLM providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, Groq, Ollama, vLLM, Moonshot, MiniMax, Mistral, and custom endpoints. |
-| **Multi-Channel** | 7 chat platforms: Telegram, Discord, Slack, Feishu, QQ, WeCom, WeChat. Extensible base class. |
-| **Web UI Dashboard** | Modern dark-themed web interface with real-time streaming chat, provider health monitoring, session management, tool viewer, and config editor. |
-| **Config Hot-Reload** | File-watch based config reloading. Environment variable overlay via Pydantic Settings. |
-| **Cron Scheduler** | Schedule recurring agent tasks with cron expressions. |
-| **Health Monitoring** | Heartbeat service with periodic provider health checks. |
+## 核心特性
 
-## Architecture
+| 特性 | 说明 |
+|------|------|
+| **熔断器 + 故障转移** | 当某个 LLM 提供商不可用时自动切换。可追踪失败次数、打开熔断，并将请求路由到健康提供商。 |
+| **优先级消息总线** | 基于优先级的异步消息队列，并带有失败消息的死信处理。 |
+| **持久化会话** | 基于 JSON 的会话存储，支持 TTL 淘汰和按 token 感知的上下文窗口裁剪。 |
+| **并行工具执行** | 多个工具调用通过 `asyncio.gather` 并发执行，加快 Agent 循环。 |
+| **专家系统** | 内置 17 个部门、170 个领域专家人格。支持 `@slug` 激活、粘性会话以及可选的 LLM 自动路由。 |
+| **热重载插件** | 技能可从磁盘加载并支持热重载。放入 `SKILL.md` 和工具后即可重新加载。 |
+| **MCP 客户端** | 支持 stdio 和 HTTP 两种 Model Context Protocol 传输方式，可连接外部工具服务。 |
+| **安全层** | 具备限流、按频道访问控制、输入清洗、阻断模式检测等能力。 |
+| **多提供商** | 支持 12+ LLM 提供商：OpenRouter、Anthropic、OpenAI、DeepSeek、Gemini、Groq、Ollama、vLLM、Moonshot、MiniMax、Mistral，以及自定义端点。 |
+| **多聊天渠道** | 支持 7 个聊天平台：Telegram、Discord、Slack、飞书、QQ、企业微信、微信。可通过基类扩展。 |
+| **Web UI 控制台** | 现代化深色风格 Web 界面，支持实时流式聊天、提供商健康监控、会话管理、工具查看和配置编辑。 |
+| **配置热重载** | 基于文件监听的配置重载，并支持通过 Pydantic Settings 叠加环境变量。 |
+| **Cron 调度器** | 可用 cron 表达式调度周期性 Agent 任务。 |
+| **健康监控** | 提供心跳服务，定期检查各 LLM 提供商健康状态。 |
 
-```
+## 架构
+
+```text
 ultrabot/
-├── agent/          # Core agent with tool-calling loop
-│   ├── agent.py    # Agent class with parallel tool execution
-│   └── prompts.py  # System prompt builder + expert prompt injection
-├── bus/            # Priority message bus with dead-letter queue
+├── agent/          # 核心 Agent 与工具调用循环
+│   ├── agent.py    # 支持并行工具执行的 Agent 类
+│   └── prompts.py  # 系统提示词构建 + 专家提示词注入
+├── bus/            # 带死信队列的优先级消息总线
 │   ├── events.py   # InboundMessage / OutboundMessage
-│   └── queue.py    # MessageBus with priority queue
-├── channels/       # Chat platform integrations (7 adapters)
+│   └── queue.py    # MessageBus 与优先级队列
+├── channels/       # 聊天平台集成（7 个适配器）
 │   ├── base.py     # BaseChannel ABC + ChannelManager
-│   ├── telegram.py # Telegram (python-telegram-bot, polling)
-│   ├── discord_channel.py  # Discord (discord.py)
-│   ├── slack_channel.py    # Slack (slack-sdk, Socket Mode)
-│   ├── feishu.py   # Feishu/Lark (lark-oapi, WebSocket)
-│   ├── qq.py       # QQ Bot (qq-botpy, WebSocket)
-│   ├── wecom.py    # WeCom (wecom-aibot-sdk, WebSocket)
-│   └── weixin.py   # WeChat (HTTP long-poll, AES media)
-├── cli/            # CLI commands (Typer)
-│   ├── commands.py # onboard, agent, gateway, status, experts
-│   └── stream.py   # Streaming terminal renderer
-├── config/         # Pydantic config with hot-reload
-│   ├── schema.py   # All config schemas
-│   ├── loader.py   # Load/save/watch config
-│   └── paths.py    # Path utilities
-├── cron/           # Cron job scheduler
-├── experts/        # Expert persona system (170 bundled experts)
-│   ├── parser.py   # Parse markdown personas → ExpertPersona
-│   ├── registry.py # Load, index, search experts
-│   ├── router.py   # Route messages to experts (@slug, sticky, auto)
-│   ├── sync.py     # Sync personas from GitHub
-│   └── personas/   # 170 bundled .md files (17 departments)
-├── gateway/        # Gateway server orchestration
-├── heartbeat/      # Provider health monitoring
-├── mcp/            # MCP client (stdio + HTTP)
-├── providers/      # LLM provider abstraction
-│   ├── base.py     # LLMProvider ABC with retry
-│   ├── circuit_breaker.py  # Circuit breaker pattern
-│   ├── manager.py  # ProviderManager with failover
-│   ├── registry.py # Provider registry (12+ providers)
-│   ├── openai_compat.py    # OpenAI-compatible provider
-│   └── anthropic_provider.py # Anthropic native provider
-├── security/       # Rate limiting, access control, sanitization
-├── session/        # Persistent session management
-├── skills/         # Hot-reloadable plugin system
-├── tools/          # Built-in tools + registry
+│   ├── telegram.py # Telegram（python-telegram-bot，轮询）
+│   ├── discord_channel.py  # Discord（discord.py）
+│   ├── slack_channel.py    # Slack（slack-sdk，Socket Mode）
+│   ├── feishu.py   # 飞书 / Lark（lark-oapi，WebSocket）
+│   ├── qq.py       # QQ Bot（qq-botpy，WebSocket）
+│   ├── wecom.py    # 企业微信（wecom-aibot-sdk，WebSocket）
+│   └── weixin.py   # 微信（HTTP long-poll，AES 媒体）
+├── cli/            # CLI 命令（Typer）
+│   ├── commands.py # onboard、agent、gateway、status、experts
+│   └── stream.py   # 终端流式渲染器
+├── config/         # 基于 Pydantic 的配置与热重载
+│   ├── schema.py   # 全部配置 schema
+│   ├── loader.py   # 加载 / 保存 / 监听配置
+│   └── paths.py    # 路径工具
+├── cron/           # Cron 任务调度器
+├── experts/        # 专家人格系统（内置 170 个专家）
+│   ├── parser.py   # 将 Markdown 人格解析为 ExpertPersona
+│   ├── registry.py # 加载、索引、搜索专家
+│   ├── router.py   # 按消息路由到专家（@slug、粘性、自动）
+│   ├── sync.py     # 从 GitHub 同步人格
+│   └── personas/   # 170 个内置 .md 文件（17 个部门）
+├── gateway/        # 网关服务编排
+├── heartbeat/      # 提供商健康监控
+├── mcp/            # MCP 客户端（stdio + HTTP）
+├── providers/      # LLM 提供商抽象层
+│   ├── base.py     # 带重试的 LLMProvider ABC
+│   ├── circuit_breaker.py  # 熔断器模式
+│   ├── manager.py  # 带故障转移的 ProviderManager
+│   ├── registry.py # 提供商注册表（12+ 提供商）
+│   ├── openai_compat.py    # OpenAI 兼容提供商
+│   └── anthropic_provider.py # Anthropic 原生提供商
+├── security/       # 限流、访问控制、输入清洗
+├── session/        # 持久化会话管理
+├── skills/         # 支持热重载的插件系统
+├── tools/          # 内置工具 + 注册表
 │   ├── base.py     # Tool ABC + ToolRegistry
-│   └── builtin.py  # 8 built-in tools
-├── utils/          # Helpers and utilities
-├── webui/          # Web UI dashboard (FastAPI + WebSocket)
-│   ├── app.py      # REST API + WebSocket streaming backend
-│   └── static/     # Frontend (HTML/CSS/JS, zero build step)
-└── templates/      # Default config templates
+│   └── builtin.py  # 8 个内置工具
+├── utils/          # 帮助函数与通用工具
+├── webui/          # Web UI 控制台（FastAPI + WebSocket）
+│   ├── app.py      # REST API + WebSocket 流式后端
+│   └── static/     # 前端（HTML/CSS/JS，零构建步骤）
+└── templates/      # 默认配置模板
 ```
 
-## Install
+## 安装
 
-**From source** (recommended for development):
+**从源码安装**（推荐开发时使用）：
 ```bash
 git clone https://github.com/junfhu/ultrabot.git
 cd ultrabot
 pip install -e .
 ```
 
-**With optional channel support:**
+**按渠道安装可选依赖：**
 ```bash
 pip install -e ".[telegram]"   # Telegram
 pip install -e ".[discord]"    # Discord
 pip install -e ".[slack]"      # Slack
-pip install -e ".[feishu]"     # Feishu / Lark
+pip install -e ".[feishu]"     # 飞书 / Lark
 pip install -e ".[qq]"         # QQ Bot
-pip install -e ".[wecom]"      # WeCom (WeChat Work)
-pip install -e ".[weixin]"     # WeChat
-pip install -e ".[mcp]"        # MCP support
-pip install -e ".[all]"        # Everything
+pip install -e ".[wecom]"      # 企业微信
+pip install -e ".[weixin]"     # 微信
+pip install -e ".[mcp]"        # MCP 支持
+pip install -e ".[all]"        # 全量安装
 ```
 
-**Development dependencies:**
+**开发依赖：**
 ```bash
 pip install -e ".[dev]"
 ```
 
-## Quick Start
+## 快速开始
 
-### 1. Initialize
+### 1. 初始化
 
 ```bash
 ultrabot onboard
 ```
 
-### 2. Configure (`~/.ultrabot/config.json`)
+### 2. 配置（`~/.ultrabot/config.json`）
 
-Set your API key (e.g., OpenRouter):
+设置 API Key（例如 OpenRouter）：
 ```json
 {
   "providers": {
@@ -125,7 +127,7 @@ Set your API key (e.g., OpenRouter):
 }
 ```
 
-Set your model:
+设置模型：
 ```json
 {
   "agents": {
@@ -137,116 +139,116 @@ Set your model:
 }
 ```
 
-### 3. Chat
+### 3. 聊天
 
 ```bash
-# Interactive mode
+# 交互模式
 ultrabot agent
 
-# One-shot message
+# 单次消息
 ultrabot agent -m "What is the capital of France?"
 
-# Check status
+# 查看状态
 ultrabot status
 ```
 
-### 4. Start Gateway (for chat channels)
+### 4. 启动 Gateway（用于聊天渠道）
 
 ```bash
 ultrabot gateway
 ```
 
-### 5. Start Web UI
+### 5. 启动 Web UI
 
 ```bash
-# Install web UI dependencies
+# 安装 Web UI 依赖
 pip install -e ".[webui]"
 
-# Launch the dashboard
+# 启动控制台
 ultrabot webui
 
-# Custom host/port
+# 自定义主机 / 端口
 ultrabot webui --host 0.0.0.0 --port 9000
 ```
 
-Open `http://127.0.0.1:18800` in your browser to access:
-- **Chat** -- Real-time streaming conversation with your AI assistant
-- **Providers** -- Live health status of all configured LLM providers
-- **Sessions** -- Browse, switch, and manage conversation sessions
-- **Tools** -- View all registered tools and their parameter schemas
-- **Config** -- Edit your configuration directly in the browser
+在浏览器中打开 `http://127.0.0.1:18800`，即可访问：
+- **Chat**：与 AI 助手进行实时流式对话
+- **Providers**：查看所有已配置 LLM 提供商的实时健康状态
+- **Sessions**：浏览、切换和管理会话
+- **Tools**：查看所有已注册工具及其参数 schema
+- **Config**：直接在浏览器中编辑配置
 
-## Expert System
+## 专家系统
 
-ultrabot ships with **170 domain-expert personas** across **17 professional departments**, powered by [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh). Experts work out of the box with zero setup.
+ultrabot 内置了覆盖 **17 个专业部门** 的 **170 个领域专家人格**，由 [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh) 提供支持，开箱即用，无需额外配置。
 
-### Departments
+### 部门
 
-| Department | Experts | Examples |
-|------------|---------|----------|
-| engineering | 27 | frontend-developer, backend-architect, devops-automator, security-engineer, SRE |
-| marketing | 32 | growth-hacker, seo-specialist, content-creator, tiktok-strategist, xiaohongshu-operator |
-| specialized | 33 | prompt-engineer, mcp-builder, agents-orchestrator, blockchain-security-auditor |
-| design | 8 | ui-designer, ux-architect, brand-guardian, visual-storyteller |
-| testing | 9 | evidence-collector, reality-checker, performance-benchmarker, api-tester |
-| sales | 8 | deal-strategist, pipeline-analyst, outbound-strategist, proposal-strategist |
-| paid-media | 7 | ppc-strategist, programmatic-buyer, tracking-specialist |
-| academic | 6 | anthropologist, historian, psychologist, study-planner |
-| spatial-computing | 6 | xr-interface-architect, visionos-engineer, xr-immersive-developer |
-| project-management | 6 | studio-producer, sprint-prioritizer, jira-workflow-steward |
-| product | 5 | product-manager, trend-researcher, feedback-synthesizer |
-| game-development | 5 | game-designer, level-designer, narrative-designer, technical-artist |
-| support | 8 | customer-responder, data-analyst, infrastructure-operator |
-| finance | 3 | financial-forecaster, fraud-detector, invoice-manager |
-| supply-chain | 3 | logistics, procurement, warehouse |
-| hr | 2 | recruiter, performance-reviewer |
-| legal | 2 | contract-reviewer, policy-writer |
+| 部门 | 专家数 | 示例 |
+|------|--------|------|
+| engineering | 27 | frontend-developer、backend-architect、devops-automator、security-engineer、SRE |
+| marketing | 32 | growth-hacker、seo-specialist、content-creator、tiktok-strategist、xiaohongshu-operator |
+| specialized | 33 | prompt-engineer、mcp-builder、agents-orchestrator、blockchain-security-auditor |
+| design | 8 | ui-designer、ux-architect、brand-guardian、visual-storyteller |
+| testing | 9 | evidence-collector、reality-checker、performance-benchmarker、api-tester |
+| sales | 8 | deal-strategist、pipeline-analyst、outbound-strategist、proposal-strategist |
+| paid-media | 7 | ppc-strategist、programmatic-buyer、tracking-specialist |
+| academic | 6 | anthropologist、historian、psychologist、study-planner |
+| spatial-computing | 6 | xr-interface-architect、visionos-engineer、xr-immersive-developer |
+| project-management | 6 | studio-producer、sprint-prioritizer、jira-workflow-steward |
+| product | 5 | product-manager、trend-researcher、feedback-synthesizer |
+| game-development | 5 | game-designer、level-designer、narrative-designer、technical-artist |
+| support | 8 | customer-responder、data-analyst、infrastructure-operator |
+| finance | 3 | financial-forecaster、fraud-detector、invoice-manager |
+| supply-chain | 3 | logistics、procurement、warehouse |
+| hr | 2 | recruiter、performance-reviewer |
+| legal | 2 | contract-reviewer、policy-writer |
 
-### Using Experts
+### 使用专家
 
-**CLI management:**
+**CLI 管理：**
 ```bash
-# List all experts
+# 列出所有专家
 ultrabot experts list
 
-# Filter by department
+# 按部门筛选
 ultrabot experts list -d engineering
 
-# Search by keyword
+# 按关键词搜索
 ultrabot experts search "frontend"
 
-# Detailed info
+# 查看详细信息
 ultrabot experts info engineering-frontend-developer
 
-# Sync latest from GitHub (optional, bundled personas included)
+# 从 GitHub 同步最新人格（可选，项目已内置）
 ultrabot experts sync
 ```
 
-**In chat (interactive or channel):**
-```
-# Activate an expert with @slug
+**在聊天中使用（交互模式或渠道内）：**
+```text
+# 使用 @slug 激活专家
 @engineering-frontend-developer How do I optimize React performance?
 
-# Or with /expert command
+# 或通过 /expert 命令
 /expert product-manager What's the roadmap for Q2?
 
-# Expert stays active (sticky session) for all subsequent messages
-What about Vue performance?          # still uses frontend-developer
+# 专家会在后续消息中持续生效（粘性会话）
+What about Vue performance?          # 仍然使用 frontend-developer
 
-# List all available experts
+# 列出所有可用专家
 /experts
 
-# Search experts in chat
+# 在聊天中搜索专家
 /experts database
 
-# Switch expert
+# 切换专家
 @marketing-seo-specialist Audit my site's SEO
 
-# Return to default ultrabot
+# 返回默认 ultrabot
 /expert off
 ```
 
-### Expert Configuration
+### 专家配置
 
 ```json
 {
@@ -260,34 +262,34 @@ What about Vue performance?          # still uses frontend-developer
 }
 ```
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `true` | Enable/disable the expert system |
-| `directory` | `~/.ultrabot/experts` | Custom persona directory (overrides bundled) |
-| `autoRoute` | `false` | LLM auto-picks the best expert for each message |
-| `autoSync` | `false` | Auto-download latest personas from GitHub on startup |
-| `departments` | `[]` (all) | Filter: `["engineering", "design"]` loads only those |
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `enabled` | `true` | 启用或禁用专家系统 |
+| `directory` | `~/.ultrabot/experts` | 自定义人格目录（会覆盖内置人格） |
+| `autoRoute` | `false` | 由 LLM 自动为每条消息选择最合适的专家 |
+| `autoSync` | `false` | 启动时自动从 GitHub 下载最新人格 |
+| `departments` | `[]`（全部） | 过滤加载的部门，例如 `["engineering", "design"]` |
 
 ## Providers
 
-ultrabot auto-detects the provider from the model name. You can also set `provider` explicitly.
+ultrabot 会根据模型名自动识别 provider，你也可以显式设置 `provider`。
 
-| Provider | Keywords | API Base |
-|----------|----------|----------|
+| Provider | 关键词 | API Base |
+|----------|--------|----------|
 | `openrouter` | openrouter | openrouter.ai/api/v1 |
-| `anthropic` | anthropic, claude | (native SDK) |
-| `openai` | openai, gpt | (native SDK) |
+| `anthropic` | anthropic、claude | （原生 SDK） |
+| `openai` | openai、gpt | （原生 SDK） |
 | `deepseek` | deepseek | api.deepseek.com |
 | `gemini` | gemini | generativelanguage.googleapis.com |
 | `groq` | groq | api.groq.com/openai/v1 |
-| `moonshot` | moonshot, kimi | api.moonshot.cn/v1 |
+| `moonshot` | moonshot、kimi | api.moonshot.cn/v1 |
 | `minimax` | minimax | api.minimax.chat/v1 |
 | `mistral` | mistral | api.mistral.ai/v1 |
 | `ollama` | ollama | localhost:11434/v1 |
 | `vllm` | vllm | localhost:8000/v1 |
-| `custom` | (any) | (user-defined) |
+| `custom` | （任意） | （用户自定义） |
 
-### Adding a Custom Provider
+### 添加自定义 Provider
 
 ```json
 {
@@ -305,9 +307,9 @@ ultrabot auto-detects the provider from the model name. You can also set `provid
 }
 ```
 
-### Circuit Breaker Failover
+### 熔断故障转移
 
-Configure multiple providers. If the primary fails (5 consecutive errors), ultrabot automatically routes to the next healthy provider:
+配置多个 provider。当主 provider 失败时（连续 5 次错误），ultrabot 会自动路由到下一个健康 provider：
 
 ```json
 {
@@ -319,21 +321,21 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 }
 ```
 
-## Chat Channels
+## 聊天渠道
 
-| Channel | Transport | Requirements | Install |
-|---------|-----------|-------------|---------|
-| **Telegram** | Bot API (polling) | Bot token from @BotFather | `pip install -e ".[telegram]"` |
-| **Discord** | discord.py | Bot token + Message Content intent | `pip install -e ".[discord]"` |
-| **Slack** | Socket Mode | Bot token + App-Level token | `pip install -e ".[slack]"` |
-| **Feishu** | WebSocket (lark-oapi) | App ID + App Secret | `pip install -e ".[feishu]"` |
-| **QQ** | WebSocket (qq-botpy) | Bot AppID + Token | `pip install -e ".[qq]"` |
-| **WeCom** | WebSocket (wecom-aibot-sdk) | Corp ID + Agent ID + Secret | `pip install -e ".[wecom]"` |
-| **WeChat** | HTTP long-poll (ilinkai) | ilinkai API token | `pip install -e ".[weixin]"` |
+| 渠道 | 传输方式 | 依赖要求 | 安装方式 |
+|------|----------|----------|----------|
+| **Telegram** | Bot API（轮询） | 通过 @BotFather 获取 Bot Token | `pip install -e ".[telegram]"` |
+| **Discord** | discord.py | Bot Token + Message Content intent | `pip install -e ".[discord]"` |
+| **Slack** | Socket Mode | Bot Token + App-Level Token | `pip install -e ".[slack]"` |
+| **飞书** | WebSocket（lark-oapi） | App ID + App Secret | `pip install -e ".[feishu]"` |
+| **QQ** | WebSocket（qq-botpy） | Bot AppID + Token | `pip install -e ".[qq]"` |
+| **企业微信** | WebSocket（wecom-aibot-sdk） | Corp ID + Agent ID + Secret | `pip install -e ".[wecom]"` |
+| **微信** | HTTP long-poll（ilinkai） | ilinkai API token | `pip install -e ".[weixin]"` |
 
-### Channel Configuration Examples
+### 渠道配置示例
 
-**Telegram:**
+**Telegram：**
 ```json
 {
   "channels": {
@@ -346,7 +348,7 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 }
 ```
 
-**Feishu:**
+**飞书：**
 ```json
 {
   "channels": {
@@ -359,7 +361,7 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 }
 ```
 
-**QQ:**
+**QQ：**
 ```json
 {
   "channels": {
@@ -372,7 +374,7 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 }
 ```
 
-**WeCom:**
+**企业微信：**
 ```json
 {
   "channels": {
@@ -386,7 +388,7 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 }
 ```
 
-**WeChat:**
+**微信：**
 ```json
 {
   "channels": {
@@ -398,24 +400,24 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 }
 ```
 
-## Built-in Tools
+## 内置工具
 
-| Tool | Description |
-|------|-------------|
-| `web_search` | Search the web via DuckDuckGo (or configured provider) |
-| `fetch_url` | Fetch a URL and return content (optional markdown conversion) |
-| `read_file` | Read file contents with optional offset/limit |
-| `write_file` | Write content to a file |
-| `list_files` | List directory contents with file info |
-| `delete_file` | Delete a file |
-| `exec_shell` | Execute shell commands with timeout |
-| `python_repl` | Evaluate Python code in isolated subprocess |
+| 工具 | 说明 |
+|------|------|
+| `web_search` | 通过 DuckDuckGo（或已配置 provider）进行网页搜索 |
+| `fetch_url` | 获取 URL 内容并返回（可选转换为 Markdown） |
+| `read_file` | 读取文件内容，支持 offset / limit |
+| `write_file` | 写入文件内容 |
+| `list_files` | 列出目录内容及文件信息 |
+| `delete_file` | 删除文件 |
+| `exec_shell` | 在超时控制下执行 shell 命令 |
+| `python_repl` | 在隔离子进程中执行 Python 代码 |
 
-All file and shell tools are sandboxed to the configured workspace directory.
+所有文件与 shell 工具都被限制在配置的工作区目录中运行。
 
-## MCP (Model Context Protocol)
+## MCP（Model Context Protocol）
 
-Connect external tool servers:
+连接外部工具服务：
 
 ```json
 {
@@ -434,14 +436,14 @@ Connect external tool servers:
 }
 ```
 
-## Security
+## 安全
 
-Built-in security layer with:
+内置安全层，提供：
 
-- **Rate limiting**: Sliding-window token bucket algorithm (configurable RPM and burst)
-- **Access control**: Per-channel allow lists with wildcard support
-- **Input sanitization**: Length limits, blocked regex patterns, control character stripping
-- **Workspace sandboxing**: File and shell tools restricted to workspace directory
+- **限流**：滑动窗口 token bucket 算法（可配置 RPM 与 burst）
+- **访问控制**：按频道设置 allow list，并支持通配符
+- **输入清洗**：长度限制、阻断正则模式、控制字符剔除
+- **工作区沙箱**：文件与 shell 工具仅允许访问工作区目录
 
 ```json
 {
@@ -454,9 +456,9 @@ Built-in security layer with:
 }
 ```
 
-## Cron Scheduler
+## Cron 调度器
 
-Create scheduled tasks in `~/.ultrabot/cron/`:
+在 `~/.ultrabot/cron/` 中创建计划任务：
 
 ```json
 {
@@ -469,80 +471,80 @@ Create scheduled tasks in `~/.ultrabot/cron/`:
 }
 ```
 
-## Configuration Reference
+## 配置参考
 
-Config file: `~/.ultrabot/config.json`
+配置文件：`~/.ultrabot/config.json`
 
-| Section | Key Settings |
-|---------|-------------|
-| `providers` | API keys, base URLs, priority for each provider |
-| `agents.defaults` | model, provider, maxTokens, temperature, maxToolIterations, reasoningEffort, timezone |
-| `experts` | enabled, directory, autoRoute, autoSync, departments |
-| `channels` | sendProgress, sendToolHints, sendMaxRetries, per-channel configs |
-| `gateway` | host, port, heartbeat settings |
-| `tools` | Web search, exec, workspace restriction, MCP servers |
-| `security` | Rate limits, input length, blocked patterns |
+| 配置段 | 关键项 |
+|--------|--------|
+| `providers` | 各 provider 的 API key、base URL、优先级 |
+| `agents.defaults` | model、provider、maxTokens、temperature、maxToolIterations、reasoningEffort、timezone |
+| `experts` | enabled、directory、autoRoute、autoSync、departments |
+| `channels` | sendProgress、sendToolHints、sendMaxRetries、各渠道配置 |
+| `gateway` | host、port、heartbeat 设置 |
+| `tools` | Web 搜索、命令执行、工作区限制、MCP servers |
+| `security` | 限流、输入长度、阻断模式 |
 
-Environment variables override config with prefix `ULTRABOT_` and `__` nesting:
+环境变量可通过 `ULTRABOT_` 前缀与 `__` 嵌套覆盖配置：
 ```bash
 export ULTRABOT_PROVIDERS__OPENROUTER__API_KEY=sk-or-v1-xxx
 export ULTRABOT_EXPERTS__AUTO_ROUTE=true
 ```
 
-## Design Documents
+## 设计文档
 
-- **[High-Level Design (HLD)](docs/HLD.md)** -- System architecture, component overview, data flow, design patterns
-- **[Low-Level Design (LLD)](docs/LLD.md)** -- Detailed class specifications, algorithms, state machines, sequence diagrams
+- **[高层设计（HLD）](docs/HLD.md)**：系统架构、组件概览、数据流、设计模式
+- **[低层设计（LLD）](docs/LLD.md)**：详细类设计、算法、状态机、时序图
 
-## Development
+## 开发
 
 ```bash
-# Install dev dependencies
+# 安装开发依赖
 pip install -e ".[dev]"
 
-# Run tests (196 tests)
+# 运行测试（196 个测试）
 pytest
 
-# Run with coverage
+# 带覆盖率运行
 pytest --cov=ultrabot
 
 # Lint
 ruff check ultrabot/
 ```
 
-## Project Stats
+## 项目统计
 
-| Metric | Value |
-|--------|-------|
-| Python source files | 57 |
-| Lines of code | ~11,765 |
-| Test files | 13 |
-| Test cases | 196 |
+| 指标 | 数值 |
+|------|------|
+| Python 源码文件 | 57 |
+| 代码行数 | ~11,765 |
+| 测试文件 | 13 |
+| 测试用例 | 196 |
 | LLM providers | 12+ |
-| Chat channels | 7 |
-| Built-in tools | 8 |
-| Expert personas | 170 |
-| Expert departments | 17 |
+| 聊天渠道 | 7 |
+| 内置工具 | 8 |
+| 专家人格 | 170 |
+| 专家部门 | 17 |
 
-## Comparison with nanobot
+## 与 nanobot 对比
 
-| Feature | nanobot | ultrabot |
-|---------|---------|----------|
-| Circuit breaker failover | No | Yes |
-| Priority message queue | No | Yes (with dead-letter) |
-| Session persistence | JSON files | JSON files + TTL + context trim |
-| Parallel tool execution | Sequential | Concurrent (asyncio.gather) |
-| Plugin hot-reload | No | Yes |
-| Security layer | Basic allowFrom | Rate limit + sanitize + ACL |
-| Config hot-reload | No | Yes (file watcher) |
-| MCP support | Yes | Yes (stdio + HTTP) |
-| Provider count | 20+ | 12+ (extensible) |
-| Channel count | 12+ | 7 (extensible base class) |
-| Expert system | No | 170 experts, 17 departments |
-| Web UI | No | Yes (FastAPI + WebSocket streaming) |
-| Code size | ~5000 lines | ~11,765 lines |
+| 特性 | nanobot | ultrabot |
+|------|---------|----------|
+| 熔断故障转移 | 否 | 是 |
+| 优先级消息队列 | 否 | 是（带死信） |
+| 会话持久化 | JSON 文件 | JSON 文件 + TTL + 上下文裁剪 |
+| 并行工具执行 | 串行 | 并发（`asyncio.gather`） |
+| 插件热重载 | 否 | 是 |
+| 安全层 | 基础 allowFrom | 限流 + 清洗 + ACL |
+| 配置热重载 | 否 | 是（文件监听） |
+| MCP 支持 | 是 | 是（stdio + HTTP） |
+| Provider 数量 | 20+ | 12+（可扩展） |
+| 渠道数量 | 12+ | 7（基础类可扩展） |
+| 专家系统 | 否 | 170 个专家，17 个部门 |
+| Web UI | 否 | 是（FastAPI + WebSocket 流式） |
+| 代码规模 | ~5000 行 | ~11,765 行 |
 | Python | >=3.11 | >=3.11 |
 
-## License
+## 许可证
 
 MIT
