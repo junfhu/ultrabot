@@ -69,6 +69,34 @@ class Session:
         self.token_count = 0
         self.last_active = datetime.now(timezone.utc)
 
+    def trim(self, max_tokens: int) -> int:
+        """Drop the oldest non-system messages until *token_count* fits
+        within *max_tokens*.
+
+        Returns the number of messages removed.
+        """
+        removed = 0
+        while self.token_count > max_tokens and self.messages:
+            # Never trim the system prompt.
+            if self.messages[0].get("role") == "system":
+                if len(self.messages) <= 1:
+                    break
+                oldest = self.messages.pop(1)
+            else:
+                oldest = self.messages.pop(0)
+            tokens = self._estimate_tokens(oldest.get("content", ""))
+            self.token_count = max(self.token_count - tokens, 0)
+            removed += 1
+
+        if removed:
+            logger.debug(
+                "Trimmed {} message(s) from session {} (tokens now ~{})",
+                removed,
+                self.session_id,
+                self.token_count,
+            )
+        return removed
+
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
