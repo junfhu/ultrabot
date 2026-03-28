@@ -204,7 +204,7 @@ class HeartbeatConfig(Base):
 class GatewayConfig(Base):
     """WebSocket / HTTP gateway configuration."""
 
-    host: str = Field(default="127.0.0.1")
+    host: str = Field(default="0.0.0.0")
     port: int = Field(default=8765)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
 

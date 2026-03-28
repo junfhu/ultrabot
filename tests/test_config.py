@@ -49,7 +49,7 @@ def test_default_config_creation():
     assert isinstance(cfg.security, SecurityConfig)
 
     # Gateway
-    assert cfg.gateway.host == "127.0.0.1"
+    assert cfg.gateway.host == "0.0.0.0"
     assert cfg.gateway.port == 8765
 
     # Tools

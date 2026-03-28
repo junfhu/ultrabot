@@ -340,7 +340,7 @@ def webui(
     host: Annotated[
         str,
         typer.Option("--host", "-h", help="Bind host address."),
-    ] = "127.0.0.1",
+    ] = "0.0.0.0",
     port: Annotated[
         int,
         typer.Option("--port", "-p", help="Bind port number."),

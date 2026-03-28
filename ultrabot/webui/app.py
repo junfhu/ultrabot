@@ -11,7 +11,7 @@ Usage::
     app = create_app(config_path="~/.ultrabot/config.json")
 
     # Or start the server directly:
-    run_server(host="127.0.0.1", port=8080)
+    run_server(host="0.0.0.0", port=8080)
 """
 
 from __future__ import annotations
@@ -596,7 +596,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
 
 
 def run_server(
-    host: str = "127.0.0.1",
+    host: str = "0.0.0.0",
     port: int = 8080,
     config_path: str | Path | None = None,
 ) -> None:
