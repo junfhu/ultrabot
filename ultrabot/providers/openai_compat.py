@@ -49,6 +49,20 @@ class OpenAICompatProvider(LLMProvider):
             )
         return self._client
 
+    # -- validation --------------------------------------------------------
+
+    async def validate(self) -> dict[str, Any]:
+        """Ping the provider by listing models."""
+        is_local = self.spec.is_local if self.spec else False
+        if not is_local and not self.api_key:
+            return {"ok": False, "error": "No API key configured"}
+        try:
+            models_page = await self.client.models.list()
+            names = [m.id for m in models_page.data[:5]]
+            return {"ok": True, "models": names}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     # -- non-streaming chat ------------------------------------------------
 
     async def chat(

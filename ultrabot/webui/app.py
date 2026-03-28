@@ -322,13 +322,19 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/api/providers")
     async def get_providers() -> dict[str, Any]:
-        """Return configured providers with their circuit-breaker health."""
+        """Return configured providers with real validation status."""
         if _provider_manager is None:
             raise HTTPException(status_code=503, detail="Server not initialised")
-        health = _provider_manager.health_check()
+        results = await _provider_manager.validate_providers()
         providers = [
-            {"name": name, "healthy": is_healthy}
-            for name, is_healthy in health.items()
+            {
+                "name": name,
+                "healthy": info.get("ok", False),
+                "error": info.get("error"),
+                "breaker": info.get("breaker", "closed"),
+                "models": info.get("models"),
+            }
+            for name, info in results.items()
         ]
         return {"providers": providers}
 

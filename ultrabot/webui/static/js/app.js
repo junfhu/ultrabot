@@ -91,6 +91,8 @@
             "providers.title": "提供商", "providers.noProviders": "未配置提供商。",
             "providers.healthy": "正常", "providers.unhealthy": "异常",
             "providers.loadFailed": "加载提供商失败: ", "providers.status": "状态: ",
+            "providers.error": "错误: ", "providers.breaker": "熔断器: ",
+            "providers.models": "模型: ", "providers.validating": "正在验证提供商连接...",
             "sessions.title": "会话", "sessions.noSessions": "没有活跃会话。",
             "sessions.current": "当前", "sessions.messages": "消息",
             "sessions.switchedTo": "已切换到会话: ", "sessions.deleted": "会话已删除: ",
@@ -180,6 +182,8 @@
             "providers.title": "Providers", "providers.noProviders": "No providers configured.",
             "providers.healthy": "Healthy", "providers.unhealthy": "Unhealthy",
             "providers.loadFailed": "Failed to load providers: ", "providers.status": "Status: ",
+            "providers.error": "Error: ", "providers.breaker": "Circuit breaker: ",
+            "providers.models": "Models: ", "providers.validating": "Validating provider connections...",
             "sessions.title": "Sessions", "sessions.noSessions": "No active sessions.",
             "sessions.current": "Current", "sessions.messages": "Messages",
             "sessions.switchedTo": "Switched to session: ", "sessions.deleted": "Session deleted: ",
@@ -761,31 +765,47 @@
             '<div class="page" style="display:flex;flex-direction:column;height:100%;">' +
                 '<div class="page-header"><h1 class="page-title">' + escapeHtml(t("providers.title")) + '</h1>' +
                 '<div class="header-actions"><button id="providers-refresh-btn" class="btn btn-ghost">' + escapeHtml(t("common.refresh")) + '</button></div></div>' +
-                '<div class="page-content"><div id="providers-grid" class="providers-grid"><div class="loading-spinner"></div></div></div>' +
+                '<div class="page-content"><div id="providers-grid" class="providers-grid">' +
+                    '<p class="empty-state">' + escapeHtml(t("providers.validating")) + '</p>' +
+                '</div></div>' +
             '</div>';
         loadProviders();
         var refreshBtn = document.getElementById("providers-refresh-btn");
-        if (refreshBtn) refreshBtn.addEventListener("click", loadProviders);
+        if (refreshBtn) refreshBtn.addEventListener("click", function () {
+            var grid = document.getElementById("providers-grid");
+            if (grid) grid.innerHTML = '<p class="empty-state">' + escapeHtml(t("providers.validating")) + '</p>';
+            loadProviders();
+        });
         if (state.providersRefreshTimer) clearInterval(state.providersRefreshTimer);
-        state.providersRefreshTimer = setInterval(function () { if (state.currentPage === "providers") loadProviders(); }, 30000);
+        state.providersRefreshTimer = setInterval(function () { if (state.currentPage === "providers") loadProviders(); }, 60000);
     }
 
     function loadProviders() {
         apiFetch("/api/providers").then(function (data) {
             var grid = document.getElementById("providers-grid");
             if (!grid || state.currentPage !== "providers") return;
-            var providers = data.providers || {};
-            var keys = Object.keys(providers);
-            if (keys.length === 0) { grid.innerHTML = '<p class="empty-state">' + escapeHtml(t("providers.noProviders")) + '</p>'; return; }
+            var list = data.providers || [];
+            if (list.length === 0) { grid.innerHTML = '<p class="empty-state">' + escapeHtml(t("providers.noProviders")) + '</p>'; return; }
             var html = "";
-            keys.forEach(function (name) {
-                var healthy = providers[name];
+            list.forEach(function (p) {
+                var healthy = p.healthy;
+                var statusClass = healthy ? "healthy" : "unhealthy";
                 html += '<div class="provider-card"><div class="provider-card-header">' +
-                    '<span class="status-dot ' + (healthy ? "healthy" : "unhealthy") + '"></span>' +
-                    '<h3>' + escapeHtml(name) + '</h3></div>' +
-                    '<div class="provider-card-body"><p class="provider-status">' +
-                    escapeHtml(t("providers.status")) + (healthy ? t("providers.healthy") : t("providers.unhealthy")) +
-                    '</p></div></div>';
+                    '<span class="status-dot ' + statusClass + '"></span>' +
+                    '<h3>' + escapeHtml(p.name) + '</h3></div>' +
+                    '<div class="provider-card-body">' +
+                    '<p class="provider-status">' +
+                    escapeHtml(t("providers.status")) + '<strong>' + (healthy ? t("providers.healthy") : t("providers.unhealthy")) + '</strong>' +
+                    '</p>';
+                if (p.error) {
+                    html += '<p class="provider-error" style="color:var(--nb-text-muted);font-size:0.8125rem;margin-top:4px;word-break:break-word;">' +
+                        escapeHtml(t("providers.error")) + escapeHtml(p.error) + '</p>';
+                }
+                if (p.models && p.models.length > 0) {
+                    html += '<p class="provider-models" style="color:var(--nb-text-muted);font-size:0.8125rem;margin-top:4px;">' +
+                        escapeHtml(t("providers.models")) + escapeHtml(p.models.join(", ")) + '</p>';
+                }
+                html += '</div></div>';
             });
             grid.innerHTML = html;
         }).catch(function (err) {

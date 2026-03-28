@@ -107,6 +107,20 @@ class LLMProvider(ABC):
         self.api_base = api_base
         self.generation = generation or GenerationSettings()
 
+    # -- validation --------------------------------------------------------
+
+    async def validate(self) -> dict[str, Any]:
+        """Check whether the provider is reachable and the credentials work.
+
+        Returns a dict with at least ``{"ok": bool}``.  On failure the dict
+        also contains ``"error": str``.  Sub-classes should override this
+        with a lightweight API call (e.g. listing models).
+        """
+        # Default: check that an API key is configured (non-local providers).
+        if not self.api_key:
+            return {"ok": False, "error": "No API key configured"}
+        return {"ok": True}
+
     # -- abstract ----------------------------------------------------------
 
     @abstractmethod

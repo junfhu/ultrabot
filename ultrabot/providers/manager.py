@@ -136,6 +136,27 @@ class ProviderManager:
             name: entry.breaker.can_execute for name, entry in self._entries.items()
         }
 
+    async def validate_providers(self) -> dict[str, dict[str, Any]]:
+        """Actually ping every provider and return detailed status.
+
+        Returns ``{name: {"ok": bool, "error"?: str, ...}}``
+        """
+        import asyncio
+
+        async def _validate_one(name: str, entry: _ProviderEntry) -> tuple[str, dict[str, Any]]:
+            try:
+                result = await asyncio.wait_for(entry.provider.validate(), timeout=15)
+            except asyncio.TimeoutError:
+                result = {"ok": False, "error": "Validation timed out (15s)"}
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+            result["breaker"] = entry.breaker.state.value
+            return name, result
+
+        tasks = [_validate_one(n, e) for n, e in self._entries.items()]
+        results = await asyncio.gather(*tasks)
+        return dict(results)
+
     async def chat_with_failover(
         self,
         messages: list[dict[str, Any]],

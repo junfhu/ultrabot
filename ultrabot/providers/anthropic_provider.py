@@ -53,6 +53,22 @@ class AnthropicProvider(LLMProvider):
             self._client = anthropic.AsyncAnthropic(**kwargs)
         return self._client
 
+    # -- validation --------------------------------------------------------
+
+    async def validate(self) -> dict[str, Any]:
+        """Ping Anthropic by sending a minimal message."""
+        if not self.api_key:
+            return {"ok": False, "error": "No API key configured"}
+        try:
+            resp = await self.client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=1,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     # -- non-streaming chat ------------------------------------------------
 
     async def chat(
