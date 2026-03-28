@@ -753,7 +753,7 @@
     function updateConnectionIndicator(connected) {
         var indicator = document.getElementById("connection-status");
         if (!indicator) return;
-        indicator.className = "status-dot " + (connected ? "healthy" : "unhealthy");
+        indicator.className = "status-dot " + (connected ? "connected" : "disconnected");
         indicator.title = connected ? "Connected" : "Disconnected";
     }
 
@@ -830,22 +830,27 @@
         if (!main) return;
 
         main.innerHTML =
-            '<div class="chat-container">' +
+            '<div class="page" style="display:flex;flex-direction:column;height:100%;">' +
                 '<div class="page-header">' +
-                    '<h2>Chat</h2>' +
-                    '<div class="session-selector">' +
-                        '<label for="session-select">Session:</label>' +
-                        '<span id="current-session-label" class="session-label">' +
-                            escapeHtml(state.currentSessionKey) +
+                    '<h1 class="page-title">Chat</h1>' +
+                    '<div class="header-actions">' +
+                        '<span class="session-selector">' +
+                            '<span id="current-session-label" class="session-label">' +
+                                escapeHtml(state.currentSessionKey) +
+                            '</span>' +
                         '</span>' +
                     '</div>' +
                 '</div>' +
-                '<div id="chat-messages" class="chat-messages"></div>' +
+                '<div id="chat-messages" class="chat-container"></div>' +
                 '<div class="input-area">' +
-                    '<textarea id="chat-input" class="chat-input" ' +
-                        'placeholder="Type a message... (Enter to send, Shift+Enter for newline)" ' +
-                        'rows="1"></textarea>' +
-                    '<button id="send-btn" class="btn btn-primary send-btn">Send</button>' +
+                    '<div class="input-wrapper">' +
+                        '<textarea id="chat-input" class="chat-input" ' +
+                            'placeholder="Message ultrabot..." ' +
+                            'rows="1"></textarea>' +
+                        '<button id="send-btn" class="send-btn" title="Send">' +
+                            '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>' +
+                        '</button>' +
+                    '</div>' +
                 '</div>' +
             '</div>';
 
@@ -930,13 +935,17 @@
         if (!main) return;
 
         main.innerHTML =
-            '<div class="page-content">' +
+            '<div class="page" style="display:flex;flex-direction:column;height:100%;">' +
                 '<div class="page-header">' +
-                    '<h2>Providers</h2>' +
-                    '<button id="providers-refresh-btn" class="btn btn-ghost">Refresh</button>' +
+                    '<h1 class="page-title">Providers</h1>' +
+                    '<div class="header-actions">' +
+                        '<button id="providers-refresh-btn" class="btn btn-ghost">Refresh</button>' +
+                    '</div>' +
                 '</div>' +
-                '<div id="providers-grid" class="providers-grid">' +
-                    '<div class="loading-spinner">Loading providers...</div>' +
+                '<div class="page-content">' +
+                    '<div id="providers-grid" class="providers-grid">' +
+                        '<div class="loading-spinner"></div>' +
+                    '</div>' +
                 '</div>' +
             '</div>';
 
@@ -1009,20 +1018,26 @@
         if (!main) return;
 
         main.innerHTML =
-            '<div class="page-content">' +
+            '<div class="page" style="display:flex;flex-direction:column;height:100%;">' +
                 '<div class="page-header">' +
-                    '<h2>Sessions</h2>' +
-                    '<button id="sessions-refresh-btn" class="btn btn-ghost">Refresh</button>' +
-                '</div>' +
-                '<div id="sessions-list" class="sessions-list">' +
-                    '<div class="loading-spinner">Loading sessions...</div>' +
-                '</div>' +
-                '<div id="session-messages-panel" class="session-messages-panel" style="display:none;">' +
-                    '<div class="page-header">' +
-                        '<h3 id="session-messages-title">Messages</h3>' +
-                        '<button id="session-messages-close" class="btn btn-ghost">Close</button>' +
+                    '<h1 class="page-title">Sessions</h1>' +
+                    '<div class="header-actions">' +
+                        '<button id="sessions-refresh-btn" class="btn btn-ghost">Refresh</button>' +
                     '</div>' +
-                    '<div id="session-messages-content" class="session-messages-content"></div>' +
+                '</div>' +
+                '<div class="page-content">' +
+                    '<div id="sessions-list" class="sessions-list">' +
+                        '<div class="loading-spinner"></div>' +
+                    '</div>' +
+                    '<div id="session-messages-panel" class="session-messages-panel" style="display:none;">' +
+                        '<div class="page-header" style="height:auto;padding:12px 16px;">' +
+                            '<h3 id="session-messages-title" class="page-title" style="font-size:0.9375rem;">Messages</h3>' +
+                            '<div class="header-actions">' +
+                                '<button id="session-messages-close" class="btn btn-ghost">Close</button>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div id="session-messages-content" class="session-messages-content"></div>' +
+                    '</div>' +
                 '</div>' +
             '</div>';
 
@@ -1186,13 +1201,17 @@
         if (!main) return;
 
         main.innerHTML =
-            '<div class="page-content">' +
+            '<div class="page" style="display:flex;flex-direction:column;height:100%;">' +
                 '<div class="page-header">' +
-                    '<h2>Tools</h2>' +
-                    '<button id="tools-refresh-btn" class="btn btn-ghost">Refresh</button>' +
+                    '<h1 class="page-title">Tools</h1>' +
+                    '<div class="header-actions">' +
+                        '<button id="tools-refresh-btn" class="btn btn-ghost">Refresh</button>' +
+                    '</div>' +
                 '</div>' +
-                '<div id="tools-grid" class="tools-grid">' +
-                    '<div class="loading-spinner">Loading tools...</div>' +
+                '<div class="page-content">' +
+                    '<div id="tools-grid" class="tools-grid">' +
+                        '<div class="loading-spinner"></div>' +
+                    '</div>' +
                 '</div>' +
             '</div>';
 
@@ -1281,18 +1300,20 @@
         if (!main) return;
 
         main.innerHTML =
-            '<div class="page-content">' +
+            '<div class="page" style="display:flex;flex-direction:column;height:100%;">' +
                 '<div class="page-header">' +
-                    '<h2>Configuration</h2>' +
-                    '<div class="page-header-actions">' +
+                    '<h1 class="page-title">Configuration</h1>' +
+                    '<div class="header-actions">' +
                         '<button id="config-reload-btn" class="btn btn-ghost">Reload</button>' +
                         '<button id="config-save-btn" class="btn btn-primary">Save</button>' +
                     '</div>' +
                 '</div>' +
-                '<div class="config-editor-container">' +
-                    '<textarea id="config-editor" class="config-editor" ' +
-                        'spellcheck="false" placeholder="Loading configuration..."></textarea>' +
-                    '<p id="config-status" class="config-status"></p>' +
+                '<div class="page-content">' +
+                    '<div class="config-editor-container">' +
+                        '<textarea id="config-editor" class="config-editor" ' +
+                            'spellcheck="false" placeholder="Loading configuration..."></textarea>' +
+                        '<p id="config-status" class="config-status"></p>' +
+                    '</div>' +
                 '</div>' +
             '</div>';
 
@@ -1406,22 +1427,40 @@
         }
 
         app.innerHTML =
-            '<nav class="sidebar">' +
+            '<aside class="sidebar">' +
                 '<div class="sidebar-header">' +
-                    '<h1 class="sidebar-title">Ultrabot</h1>' +
-                    '<span id="connection-status" class="status-dot unhealthy" title="Disconnected"></span>' +
+                    '<div class="logo">' +
+                        '<span class="logo-icon">&#x1F916;</span>' +
+                        '<span class="logo-text">ultrabot</span>' +
+                    '</div>' +
+                    '<span id="connection-status" class="status-dot disconnected" title="Disconnected"></span>' +
                 '</div>' +
-                '<ul class="nav-list">' +
-                    '<li class="nav-item active" data-page="chat">Chat</li>' +
-                    '<li class="nav-item" data-page="providers">Providers</li>' +
-                    '<li class="nav-item" data-page="sessions">Sessions</li>' +
-                    '<li class="nav-item" data-page="tools">Tools</li>' +
-                    '<li class="nav-item" data-page="config">Config</li>' +
-                '</ul>' +
+                '<nav class="sidebar-nav">' +
+                    '<a href="#" class="nav-item active" data-page="chat">' +
+                        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+                        '<span>Chat</span>' +
+                    '</a>' +
+                    '<a href="#" class="nav-item" data-page="providers">' +
+                        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>' +
+                        '<span>Providers</span>' +
+                    '</a>' +
+                    '<a href="#" class="nav-item" data-page="sessions">' +
+                        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>' +
+                        '<span>Sessions</span>' +
+                    '</a>' +
+                    '<a href="#" class="nav-item" data-page="tools">' +
+                        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>' +
+                        '<span>Tools</span>' +
+                    '</a>' +
+                    '<a href="#" class="nav-item" data-page="config">' +
+                        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' +
+                        '<span>Config</span>' +
+                    '</a>' +
+                '</nav>' +
                 '<div class="sidebar-footer">' +
-                    '<span class="sidebar-version">v1.0</span>' +
+                    '<div class="sidebar-info">ultrabot v0.1.0</div>' +
                 '</div>' +
-            '</nav>' +
+            '</aside>' +
             '<main id="main-content" class="main-content"></main>';
 
         // Bind navigation events.
