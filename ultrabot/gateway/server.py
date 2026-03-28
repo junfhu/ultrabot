@@ -67,22 +67,33 @@ class Gateway:
         )
 
         # Expert system
-        experts_cfg = self._config.experts
-        experts_dir = Path(experts_cfg.directory).expanduser().resolve()
-        experts_dir.mkdir(parents=True, exist_ok=True)
+        from ultrabot.experts import BUNDLED_PERSONAS_DIR
 
-        self._expert_registry = ExpertRegistry(experts_dir)
+        experts_cfg = self._config.experts
+        custom_dir = Path(experts_cfg.directory).expanduser().resolve()
+        custom_dir.mkdir(parents=True, exist_ok=True)
+
+        self._expert_registry = ExpertRegistry(custom_dir)
         if experts_cfg.enabled:
             if experts_cfg.auto_sync:
                 try:
                     from ultrabot.experts.sync import sync_personas
                     depts = set(experts_cfg.departments) if experts_cfg.departments else None
-                    sync_personas(experts_dir, departments=depts)
+                    sync_personas(custom_dir, departments=depts)
                 except Exception:
                     logger.exception("Expert auto-sync failed")
 
-            count = self._expert_registry.load_directory()
-            logger.info("Expert system: {} personas loaded", count)
+            # Load bundled personas first (shipped with the package).
+            if BUNDLED_PERSONAS_DIR.is_dir():
+                bundled = self._expert_registry.load_directory(BUNDLED_PERSONAS_DIR)
+                logger.info("Expert system: {} bundled personas loaded", bundled)
+
+            # Then load custom/user personas (may override bundled ones).
+            custom = self._expert_registry.load_directory(custom_dir)
+            if custom:
+                logger.info("Expert system: {} custom personas loaded", custom)
+
+            logger.info("Expert system: {} total personas available", len(self._expert_registry))
 
         self._expert_router = ExpertRouter(
             registry=self._expert_registry,

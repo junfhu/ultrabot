@@ -445,6 +445,29 @@ experts_app = typer.Typer(
 app.add_typer(experts_app, name="experts")
 
 
+def _load_expert_registry(config: Optional[Path] = None) -> "ExpertRegistry":
+    """Build an ExpertRegistry populated with bundled + custom personas."""
+    from ultrabot.config.loader import load_config
+    from ultrabot.experts import BUNDLED_PERSONAS_DIR
+    from ultrabot.experts.registry import ExpertRegistry
+
+    ws = _DEFAULT_WORKSPACE
+    cfg_path = _resolve_config(config, ws)
+    cfg = load_config(cfg_path) if cfg_path.exists() else None
+
+    custom_dir = Path(
+        cfg.experts.directory if cfg else "~/.ultrabot/experts"
+    ).expanduser().resolve()
+
+    registry = ExpertRegistry(custom_dir)
+    # Bundled personas (shipped with the package).
+    if BUNDLED_PERSONAS_DIR.is_dir():
+        registry.load_directory(BUNDLED_PERSONAS_DIR)
+    # Custom/user personas (may override bundled ones).
+    registry.load_directory(custom_dir)
+    return registry
+
+
 @experts_app.command("list")
 def experts_list(
     department: Annotated[
@@ -457,19 +480,8 @@ def experts_list(
     ] = None,
 ) -> None:
     """List loaded expert personas."""
-    from ultrabot.config.loader import load_config
-    from ultrabot.experts.registry import ExpertRegistry
-
-    ws = _DEFAULT_WORKSPACE
-    cfg_path = _resolve_config(config, ws)
-    cfg = load_config(cfg_path) if cfg_path.exists() else None
-
-    experts_dir = Path(
-        cfg.experts.directory if cfg else "~/.ultrabot/experts"
-    ).expanduser().resolve()
-
-    registry = ExpertRegistry(experts_dir)
-    count = registry.load_directory()
+    registry = _load_expert_registry(config)
+    count = len(registry)
 
     if count == 0:
         console.print(
@@ -508,19 +520,7 @@ def experts_info(
     ] = None,
 ) -> None:
     """Show detailed information about an expert."""
-    from ultrabot.config.loader import load_config
-    from ultrabot.experts.registry import ExpertRegistry
-
-    ws = _DEFAULT_WORKSPACE
-    cfg_path = _resolve_config(config, ws)
-    cfg = load_config(cfg_path) if cfg_path.exists() else None
-
-    experts_dir = Path(
-        cfg.experts.directory if cfg else "~/.ultrabot/experts"
-    ).expanduser().resolve()
-
-    registry = ExpertRegistry(experts_dir)
-    registry.load_directory()
+    registry = _load_expert_registry(config)
 
     persona = registry.get(slug)
     if persona is None:
@@ -560,19 +560,7 @@ def experts_search(
     ] = None,
 ) -> None:
     """Search for experts by keyword."""
-    from ultrabot.config.loader import load_config
-    from ultrabot.experts.registry import ExpertRegistry
-
-    ws = _DEFAULT_WORKSPACE
-    cfg_path = _resolve_config(config, ws)
-    cfg = load_config(cfg_path) if cfg_path.exists() else None
-
-    experts_dir = Path(
-        cfg.experts.directory if cfg else "~/.ultrabot/experts"
-    ).expanduser().resolve()
-
-    registry = ExpertRegistry(experts_dir)
-    registry.load_directory()
+    registry = _load_expert_registry(config)
 
     results = registry.search(query, limit=limit)
     if not results:

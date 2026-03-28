@@ -91,6 +91,7 @@ include = [
     "ultrabot/**/*.py",
     "ultrabot/templates/**/*.md",
     "ultrabot/skills/**/*.md",
+    "ultrabot/experts/personas/**/*.md",
     "ultrabot/webui/static/**/*",
 ]
 
