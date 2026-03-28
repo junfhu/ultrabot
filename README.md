@@ -1,6 +1,6 @@
 # ultrabot: Robust Personal AI Assistant Framework
 
-**ultrabot** is a feature-rich, production-grade personal AI assistant framework inspired by [nanobot](https://github.com/HKUDS/nanobot). It delivers the same core agent functionality with significantly stronger capabilities: circuit breaker failover, priority message queues, persistent sessions, parallel tool execution, hot-reloadable plugins, MCP support, and a built-in security layer.
+**ultrabot** is a feature-rich, production-grade personal AI assistant framework inspired by [nanobot](https://github.com/HKUDS/nanobot). It delivers the same core agent functionality with significantly stronger capabilities: circuit breaker failover, priority message queues, persistent sessions, parallel tool execution, hot-reloadable plugins, MCP support, a built-in security layer, and a 170-expert persona system across 17 professional domains.
 
 ## Key Features
 
@@ -10,11 +10,12 @@
 | **Priority Message Bus** | Priority-based async message queue with dead-letter handling for failed messages. |
 | **Persistent Sessions** | JSON-backed session storage with TTL eviction and token-aware context window trimming. |
 | **Parallel Tool Execution** | Multiple tool calls execute concurrently via `asyncio.gather` for faster agent loops. |
+| **Expert System** | 170 bundled domain-expert personas across 17 departments. Activate with `@slug`, sticky sessions, optional LLM auto-routing. |
 | **Hot-Reload Plugins** | Skills loaded from disk with hot-reload support. Drop a `SKILL.md` + tools and reload. |
 | **MCP Client** | Model Context Protocol support for stdio and HTTP transports. Connect external tool servers. |
 | **Security Layer** | Rate limiting (token bucket), access control per channel, input sanitization, blocked pattern detection. |
 | **Multi-Provider** | 12+ LLM providers: OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, Groq, Ollama, vLLM, Moonshot, MiniMax, Mistral, and custom endpoints. |
-| **Multi-Channel** | Telegram, Discord, Slack channels with retry and chunking. Extensible base class. |
+| **Multi-Channel** | 7 chat platforms: Telegram, Discord, Slack, Feishu, QQ, WeCom, WeChat. Extensible base class. |
 | **Web UI Dashboard** | Modern dark-themed web interface with real-time streaming chat, provider health monitoring, session management, tool viewer, and config editor. |
 | **Config Hot-Reload** | File-watch based config reloading. Environment variable overlay via Pydantic Settings. |
 | **Cron Scheduler** | Schedule recurring agent tasks with cron expressions. |
@@ -26,23 +27,33 @@
 ultrabot/
 ├── agent/          # Core agent with tool-calling loop
 │   ├── agent.py    # Agent class with parallel tool execution
-│   └── prompts.py  # System prompt builder
+│   └── prompts.py  # System prompt builder + expert prompt injection
 ├── bus/            # Priority message bus with dead-letter queue
 │   ├── events.py   # InboundMessage / OutboundMessage
 │   └── queue.py    # MessageBus with priority queue
-├── channels/       # Chat platform integrations
-│   ├── base.py     # BaseChannel + ChannelManager
-│   ├── telegram.py # Telegram channel
-│   ├── discord_channel.py
-│   └── slack_channel.py
+├── channels/       # Chat platform integrations (7 adapters)
+│   ├── base.py     # BaseChannel ABC + ChannelManager
+│   ├── telegram.py # Telegram (python-telegram-bot, polling)
+│   ├── discord_channel.py  # Discord (discord.py)
+│   ├── slack_channel.py    # Slack (slack-sdk, Socket Mode)
+│   ├── feishu.py   # Feishu/Lark (lark-oapi, WebSocket)
+│   ├── qq.py       # QQ Bot (qq-botpy, WebSocket)
+│   ├── wecom.py    # WeCom (wecom-aibot-sdk, WebSocket)
+│   └── weixin.py   # WeChat (HTTP long-poll, AES media)
 ├── cli/            # CLI commands (Typer)
-│   ├── commands.py # onboard, agent, gateway, status
+│   ├── commands.py # onboard, agent, gateway, status, experts
 │   └── stream.py   # Streaming terminal renderer
 ├── config/         # Pydantic config with hot-reload
 │   ├── schema.py   # All config schemas
 │   ├── loader.py   # Load/save/watch config
 │   └── paths.py    # Path utilities
 ├── cron/           # Cron job scheduler
+├── experts/        # Expert persona system (170 bundled experts)
+│   ├── parser.py   # Parse markdown personas → ExpertPersona
+│   ├── registry.py # Load, index, search experts
+│   ├── router.py   # Route messages to experts (@slug, sticky, auto)
+│   ├── sync.py     # Sync personas from GitHub
+│   └── personas/   # 170 bundled .md files (17 departments)
 ├── gateway/        # Gateway server orchestration
 ├── heartbeat/      # Provider health monitoring
 ├── mcp/            # MCP client (stdio + HTTP)
@@ -58,7 +69,7 @@ ultrabot/
 ├── skills/         # Hot-reloadable plugin system
 ├── tools/          # Built-in tools + registry
 │   ├── base.py     # Tool ABC + ToolRegistry
-│   └── builtin.py  # 6 built-in tools
+│   └── builtin.py  # 8 built-in tools
 ├── utils/          # Helpers and utilities
 ├── webui/          # Web UI dashboard (FastAPI + WebSocket)
 │   ├── app.py      # REST API + WebSocket streaming backend
@@ -70,8 +81,8 @@ ultrabot/
 
 **From source** (recommended for development):
 ```bash
-git clone <repo-url>
-cd heyuagent
+git clone https://github.com/junfhu/ultrabot.git
+cd ultrabot
 pip install -e .
 ```
 
@@ -80,6 +91,10 @@ pip install -e .
 pip install -e ".[telegram]"   # Telegram
 pip install -e ".[discord]"    # Discord
 pip install -e ".[slack]"      # Slack
+pip install -e ".[feishu]"     # Feishu / Lark
+pip install -e ".[qq]"         # QQ Bot
+pip install -e ".[wecom]"      # WeCom (WeChat Work)
+pip install -e ".[weixin]"     # WeChat
 pip install -e ".[mcp]"        # MCP support
 pip install -e ".[all]"        # Everything
 ```
@@ -161,6 +176,98 @@ Open `http://127.0.0.1:18800` in your browser to access:
 - **Tools** -- View all registered tools and their parameter schemas
 - **Config** -- Edit your configuration directly in the browser
 
+## Expert System
+
+ultrabot ships with **170 domain-expert personas** across **17 professional departments**, powered by [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh). Experts work out of the box with zero setup.
+
+### Departments
+
+| Department | Experts | Examples |
+|------------|---------|----------|
+| engineering | 27 | frontend-developer, backend-architect, devops-automator, security-engineer, SRE |
+| marketing | 32 | growth-hacker, seo-specialist, content-creator, tiktok-strategist, xiaohongshu-operator |
+| specialized | 33 | prompt-engineer, mcp-builder, agents-orchestrator, blockchain-security-auditor |
+| design | 8 | ui-designer, ux-architect, brand-guardian, visual-storyteller |
+| testing | 9 | evidence-collector, reality-checker, performance-benchmarker, api-tester |
+| sales | 8 | deal-strategist, pipeline-analyst, outbound-strategist, proposal-strategist |
+| paid-media | 7 | ppc-strategist, programmatic-buyer, tracking-specialist |
+| academic | 6 | anthropologist, historian, psychologist, study-planner |
+| spatial-computing | 6 | xr-interface-architect, visionos-engineer, xr-immersive-developer |
+| project-management | 6 | studio-producer, sprint-prioritizer, jira-workflow-steward |
+| product | 5 | product-manager, trend-researcher, feedback-synthesizer |
+| game-development | 5 | game-designer, level-designer, narrative-designer, technical-artist |
+| support | 8 | customer-responder, data-analyst, infrastructure-operator |
+| finance | 3 | financial-forecaster, fraud-detector, invoice-manager |
+| supply-chain | 3 | logistics, procurement, warehouse |
+| hr | 2 | recruiter, performance-reviewer |
+| legal | 2 | contract-reviewer, policy-writer |
+
+### Using Experts
+
+**CLI management:**
+```bash
+# List all experts
+ultrabot experts list
+
+# Filter by department
+ultrabot experts list -d engineering
+
+# Search by keyword
+ultrabot experts search "frontend"
+
+# Detailed info
+ultrabot experts info engineering-frontend-developer
+
+# Sync latest from GitHub (optional, bundled personas included)
+ultrabot experts sync
+```
+
+**In chat (interactive or channel):**
+```
+# Activate an expert with @slug
+@engineering-frontend-developer How do I optimize React performance?
+
+# Or with /expert command
+/expert product-manager What's the roadmap for Q2?
+
+# Expert stays active (sticky session) for all subsequent messages
+What about Vue performance?          # still uses frontend-developer
+
+# List all available experts
+/experts
+
+# Search experts in chat
+/experts database
+
+# Switch expert
+@marketing-seo-specialist Audit my site's SEO
+
+# Return to default ultrabot
+/expert off
+```
+
+### Expert Configuration
+
+```json
+{
+  "experts": {
+    "enabled": true,
+    "directory": "~/.ultrabot/experts",
+    "autoRoute": false,
+    "autoSync": false,
+    "departments": []
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Enable/disable the expert system |
+| `directory` | `~/.ultrabot/experts` | Custom persona directory (overrides bundled) |
+| `autoRoute` | `false` | LLM auto-picks the best expert for each message |
+| `autoSync` | `false` | Auto-download latest personas from GitHub on startup |
+| `departments` | `[]` (all) | Filter: `["engineering", "design"]` loads only those |
+
 ## Providers
 
 ultrabot auto-detects the provider from the model name. You can also set `provider` explicitly.
@@ -173,8 +280,8 @@ ultrabot auto-detects the provider from the model name. You can also set `provid
 | `deepseek` | deepseek | api.deepseek.com |
 | `gemini` | gemini | generativelanguage.googleapis.com |
 | `groq` | groq | api.groq.com/openai/v1 |
-| `moonshot` | moonshot, kimi | api.moonshot.ai/v1 |
-| `minimax` | minimax | api.minimax.io/v1 |
+| `moonshot` | moonshot, kimi | api.moonshot.cn/v1 |
+| `minimax` | minimax | api.minimax.chat/v1 |
 | `mistral` | mistral | api.mistral.ai/v1 |
 | `ollama` | ollama | localhost:11434/v1 |
 | `vllm` | vllm | localhost:8000/v1 |
@@ -214,14 +321,19 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 
 ## Chat Channels
 
-| Channel | Requirements |
-|---------|-------------|
-| **Telegram** | Bot token from @BotFather |
-| **Discord** | Bot token + Message Content intent |
-| **Slack** | Bot token + App-Level token |
+| Channel | Transport | Requirements | Install |
+|---------|-----------|-------------|---------|
+| **Telegram** | Bot API (polling) | Bot token from @BotFather | `pip install -e ".[telegram]"` |
+| **Discord** | discord.py | Bot token + Message Content intent | `pip install -e ".[discord]"` |
+| **Slack** | Socket Mode | Bot token + App-Level token | `pip install -e ".[slack]"` |
+| **Feishu** | WebSocket (lark-oapi) | App ID + App Secret | `pip install -e ".[feishu]"` |
+| **QQ** | WebSocket (qq-botpy) | Bot AppID + Token | `pip install -e ".[qq]"` |
+| **WeCom** | WebSocket (wecom-aibot-sdk) | Corp ID + Agent ID + Secret | `pip install -e ".[wecom]"` |
+| **WeChat** | HTTP long-poll (ilinkai) | ilinkai API token | `pip install -e ".[weixin]"` |
 
-### Telegram Example
+### Channel Configuration Examples
 
+**Telegram:**
 ```json
 {
   "channels": {
@@ -234,16 +346,72 @@ Configure multiple providers. If the primary fails (5 consecutive errors), ultra
 }
 ```
 
+**Feishu:**
+```json
+{
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_xxxxx",
+      "appSecret": "xxxxx"
+    }
+  }
+}
+```
+
+**QQ:**
+```json
+{
+  "channels": {
+    "qq": {
+      "enabled": true,
+      "appId": "102xxxxx",
+      "token": "xxxxx"
+    }
+  }
+}
+```
+
+**WeCom:**
+```json
+{
+  "channels": {
+    "wecom": {
+      "enabled": true,
+      "corpId": "wwxxxxx",
+      "agentId": 1000002,
+      "secret": "xxxxx"
+    }
+  }
+}
+```
+
+**WeChat:**
+```json
+{
+  "channels": {
+    "weixin": {
+      "enabled": true,
+      "token": "YOUR_ILINKAI_TOKEN"
+    }
+  }
+}
+```
+
 ## Built-in Tools
 
 | Tool | Description |
 |------|-------------|
 | `web_search` | Search the web via DuckDuckGo (or configured provider) |
+| `fetch_url` | Fetch a URL and return content (optional markdown conversion) |
 | `read_file` | Read file contents with optional offset/limit |
 | `write_file` | Write content to a file |
-| `list_directory` | List directory contents with file info |
-| `exec_command` | Execute shell commands with timeout |
-| `python_eval` | Evaluate Python code in isolated subprocess |
+| `list_files` | List directory contents with file info |
+| `delete_file` | Delete a file |
+| `exec_shell` | Execute shell commands with timeout |
+| `python_repl` | Evaluate Python code in isolated subprocess |
+
+All file and shell tools are sandboxed to the configured workspace directory.
 
 ## MCP (Model Context Protocol)
 
@@ -270,9 +438,10 @@ Connect external tool servers:
 
 Built-in security layer with:
 
-- **Rate limiting**: Token bucket algorithm (configurable RPM and burst)
+- **Rate limiting**: Sliding-window token bucket algorithm (configurable RPM and burst)
 - **Access control**: Per-channel allow lists with wildcard support
 - **Input sanitization**: Length limits, blocked regex patterns, control character stripping
+- **Workspace sandboxing**: File and shell tools restricted to workspace directory
 
 ```json
 {
@@ -306,8 +475,9 @@ Config file: `~/.ultrabot/config.json`
 
 | Section | Key Settings |
 |---------|-------------|
-| `providers` | API keys and base URLs for each provider |
-| `agents.defaults` | model, provider, maxTokens, temperature, maxToolIterations, timezone |
+| `providers` | API keys, base URLs, priority for each provider |
+| `agents.defaults` | model, provider, maxTokens, temperature, maxToolIterations, reasoningEffort, timezone |
+| `experts` | enabled, directory, autoRoute, autoSync, departments |
 | `channels` | sendProgress, sendToolHints, sendMaxRetries, per-channel configs |
 | `gateway` | host, port, heartbeat settings |
 | `tools` | Web search, exec, workspace restriction, MCP servers |
@@ -316,7 +486,13 @@ Config file: `~/.ultrabot/config.json`
 Environment variables override config with prefix `ULTRABOT_` and `__` nesting:
 ```bash
 export ULTRABOT_PROVIDERS__OPENROUTER__API_KEY=sk-or-v1-xxx
+export ULTRABOT_EXPERTS__AUTO_ROUTE=true
 ```
+
+## Design Documents
+
+- **[High-Level Design (HLD)](docs/HLD.md)** -- System architecture, component overview, data flow, design patterns
+- **[Low-Level Design (LLD)](docs/LLD.md)** -- Detailed class specifications, algorithms, state machines, sequence diagrams
 
 ## Development
 
@@ -324,7 +500,7 @@ export ULTRABOT_PROVIDERS__OPENROUTER__API_KEY=sk-or-v1-xxx
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run tests
+# Run tests (196 tests)
 pytest
 
 # Run with coverage
@@ -333,6 +509,20 @@ pytest --cov=ultrabot
 # Lint
 ruff check ultrabot/
 ```
+
+## Project Stats
+
+| Metric | Value |
+|--------|-------|
+| Python source files | 57 |
+| Lines of code | ~11,765 |
+| Test files | 13 |
+| Test cases | 196 |
+| LLM providers | 12+ |
+| Chat channels | 7 |
+| Built-in tools | 8 |
+| Expert personas | 170 |
+| Expert departments | 17 |
 
 ## Comparison with nanobot
 
@@ -347,9 +537,10 @@ ruff check ultrabot/
 | Config hot-reload | No | Yes (file watcher) |
 | MCP support | Yes | Yes (stdio + HTTP) |
 | Provider count | 20+ | 12+ (extensible) |
-| Channel count | 12+ | 3 (extensible base class) |
+| Channel count | 12+ | 7 (extensible base class) |
+| Expert system | No | 170 experts, 17 departments |
 | Web UI | No | Yes (FastAPI + WebSocket streaming) |
-| Code size | ~5000 lines | ~11,000+ lines |
+| Code size | ~5000 lines | ~11,765 lines |
 | Python | >=3.11 | >=3.11 |
 
 ## License
