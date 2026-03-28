@@ -19,6 +19,7 @@ __all__ = [
     "ProvidersConfig",
     "AgentDefaults",
     "AgentsConfig",
+    "ExpertsConfig",
     "ChannelsConfig",
     "HeartbeatConfig",
     "GatewayConfig",
@@ -114,6 +115,42 @@ class AgentsConfig(Base):
     """Agent-related configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+
+
+# ---------------------------------------------------------------------------
+# Experts
+# ---------------------------------------------------------------------------
+
+
+class ExpertsConfig(Base):
+    """Configuration for the expert persona system."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable the expert routing system.",
+    )
+    directory: str = Field(
+        default="~/.ultrabot/experts",
+        description="Directory containing expert persona .md files.",
+    )
+    auto_route: bool = Field(
+        default=False,
+        description=(
+            "Use LLM-based auto-routing to pick the best expert "
+            "when no explicit @slug command is given."
+        ),
+    )
+    auto_sync: bool = Field(
+        default=False,
+        description="Automatically sync personas from GitHub on startup.",
+    )
+    departments: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Limit loaded experts to these departments. "
+            "Empty list means load all."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +323,7 @@ class Config(BaseSettings):
     )
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    experts: ExpertsConfig = Field(default_factory=ExpertsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)

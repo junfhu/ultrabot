@@ -430,3 +430,214 @@ def status(
         console.print("  No channel-specific configs found.")
 
     console.print()
+
+
+# ---------------------------------------------------------------------------
+# experts
+# ---------------------------------------------------------------------------
+
+
+experts_app = typer.Typer(
+    name="experts",
+    help="Manage expert personas (agency-agents).",
+    no_args_is_help=True,
+)
+app.add_typer(experts_app, name="experts")
+
+
+@experts_app.command("list")
+def experts_list(
+    department: Annotated[
+        Optional[str],
+        typer.Option("--department", "-d", help="Filter by department."),
+    ] = None,
+    config: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Path to config file."),
+    ] = None,
+) -> None:
+    """List loaded expert personas."""
+    from ultrabot.config.loader import load_config
+    from ultrabot.experts.registry import ExpertRegistry
+
+    ws = _DEFAULT_WORKSPACE
+    cfg_path = _resolve_config(config, ws)
+    cfg = load_config(cfg_path) if cfg_path.exists() else None
+
+    experts_dir = Path(
+        cfg.experts.directory if cfg else "~/.ultrabot/experts"
+    ).expanduser().resolve()
+
+    registry = ExpertRegistry(experts_dir)
+    count = registry.load_directory()
+
+    if count == 0:
+        console.print(
+            "[yellow]No experts found. Run 'ultrabot experts sync' to download.[/yellow]"
+        )
+        return
+
+    if department:
+        experts = registry.list_department(department)
+        if not experts:
+            console.print(f"[yellow]No experts in department '{department}'.[/yellow]")
+            return
+        console.print(f"\n[bold]{department}[/bold] ({len(experts)} experts):")
+        for p in experts:
+            console.print(f"  [cyan]{p.slug}[/cyan]  {p.name} -- {p.description[:60]}")
+    else:
+        departments = registry.departments()
+        console.print(
+            f"\n[bold]{count} experts[/bold] across "
+            f"[bold]{len(departments)} departments[/bold]:\n"
+        )
+        for dept in departments:
+            experts = registry.list_department(dept)
+            console.print(f"  [bold blue]{dept}[/bold blue] ({len(experts)}):")
+            for p in experts:
+                console.print(f"    [cyan]{p.slug}[/cyan]  {p.name}")
+            console.print()
+
+
+@experts_app.command("info")
+def experts_info(
+    slug: Annotated[str, typer.Argument(help="Expert slug.")],
+    config: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Path to config file."),
+    ] = None,
+) -> None:
+    """Show detailed information about an expert."""
+    from ultrabot.config.loader import load_config
+    from ultrabot.experts.registry import ExpertRegistry
+
+    ws = _DEFAULT_WORKSPACE
+    cfg_path = _resolve_config(config, ws)
+    cfg = load_config(cfg_path) if cfg_path.exists() else None
+
+    experts_dir = Path(
+        cfg.experts.directory if cfg else "~/.ultrabot/experts"
+    ).expanduser().resolve()
+
+    registry = ExpertRegistry(experts_dir)
+    registry.load_directory()
+
+    persona = registry.get(slug)
+    if persona is None:
+        persona = registry.get_by_name(slug)
+    if persona is None:
+        console.print(f"[red]Expert '{slug}' not found.[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(
+        f"[bold]{persona.name}[/bold]  ({persona.slug})\n"
+        f"Department: {persona.department or 'N/A'}\n"
+        f"Color: {persona.color or 'N/A'}\n\n"
+        f"{persona.description}\n\n"
+        f"[dim]Tags: {', '.join(persona.tags[:20])}[/dim]",
+        title="Expert Info",
+    ))
+
+    if persona.identity:
+        console.print("\n[bold]Identity:[/bold]")
+        console.print(Markdown(persona.identity[:500]))
+
+    if persona.workflow:
+        console.print("\n[bold]Workflow:[/bold]")
+        console.print(Markdown(persona.workflow[:500]))
+
+
+@experts_app.command("search")
+def experts_search(
+    query: Annotated[str, typer.Argument(help="Search query.")],
+    limit: Annotated[
+        int,
+        typer.Option("--limit", "-n", help="Max results."),
+    ] = 10,
+    config: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Path to config file."),
+    ] = None,
+) -> None:
+    """Search for experts by keyword."""
+    from ultrabot.config.loader import load_config
+    from ultrabot.experts.registry import ExpertRegistry
+
+    ws = _DEFAULT_WORKSPACE
+    cfg_path = _resolve_config(config, ws)
+    cfg = load_config(cfg_path) if cfg_path.exists() else None
+
+    experts_dir = Path(
+        cfg.experts.directory if cfg else "~/.ultrabot/experts"
+    ).expanduser().resolve()
+
+    registry = ExpertRegistry(experts_dir)
+    registry.load_directory()
+
+    results = registry.search(query, limit=limit)
+    if not results:
+        console.print(f"[yellow]No experts found for '{query}'.[/yellow]")
+        return
+
+    console.print(f"\n[bold]Results for '{query}':[/bold]\n")
+    for p in results:
+        console.print(
+            f"  [cyan]{p.slug}[/cyan] [{p.department}]  {p.name} -- "
+            f"{p.description[:50]}"
+        )
+
+
+@experts_app.command("sync")
+def experts_sync(
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Re-download existing files."),
+    ] = False,
+    department: Annotated[
+        Optional[str],
+        typer.Option("--department", "-d", help="Only sync this department."),
+    ] = None,
+    config: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Path to config file."),
+    ] = None,
+) -> None:
+    """Download expert personas from the agency-agents-zh GitHub repository."""
+    from ultrabot.config.loader import load_config
+    from ultrabot.experts.sync import sync_personas
+
+    ws = _DEFAULT_WORKSPACE
+    cfg_path = _resolve_config(config, ws)
+    cfg = load_config(cfg_path) if cfg_path.exists() else None
+
+    experts_dir = Path(
+        cfg.experts.directory if cfg else "~/.ultrabot/experts"
+    ).expanduser().resolve()
+
+    departments = {department} if department else None
+
+    console.print(
+        f"[bold blue]Syncing expert personas[/bold blue] to {experts_dir}"
+    )
+
+    try:
+        from rich.progress import Progress
+
+        with Progress(console=console) as progress:
+            task = progress.add_task("Downloading...", total=None)
+
+            def on_progress(current: int, total: int, filename: str) -> None:
+                progress.update(task, total=total, completed=current, description=filename)
+
+            count = sync_personas(
+                experts_dir,
+                departments=departments,
+                force=force,
+                progress_callback=on_progress,
+            )
+    except ImportError:
+        count = sync_personas(
+            experts_dir, departments=departments, force=force
+        )
+
+    console.print(f"\n[bold green]Synced {count} persona file(s).[/bold green]")

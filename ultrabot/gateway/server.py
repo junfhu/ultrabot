@@ -47,6 +47,8 @@ class Gateway:
         from ultrabot.channels.base import ChannelManager
         from ultrabot.heartbeat.service import HeartbeatService
         from ultrabot.cron.scheduler import CronScheduler
+        from ultrabot.experts.registry import ExpertRegistry
+        from ultrabot.experts.router import ExpertRouter
 
         # Derive workspace path from agent defaults.
         workspace = Path(self._config.agents.defaults.workspace).expanduser().resolve()
@@ -62,6 +64,30 @@ class Gateway:
             provider_manager=self._provider_mgr,
             session_manager=self._session_mgr,
             tool_registry=self._tool_registry,
+        )
+
+        # Expert system
+        experts_cfg = self._config.experts
+        experts_dir = Path(experts_cfg.directory).expanduser().resolve()
+        experts_dir.mkdir(parents=True, exist_ok=True)
+
+        self._expert_registry = ExpertRegistry(experts_dir)
+        if experts_cfg.enabled:
+            if experts_cfg.auto_sync:
+                try:
+                    from ultrabot.experts.sync import sync_personas
+                    depts = set(experts_cfg.departments) if experts_cfg.departments else None
+                    sync_personas(experts_dir, departments=depts)
+                except Exception:
+                    logger.exception("Expert auto-sync failed")
+
+            count = self._expert_registry.load_directory()
+            logger.info("Expert system: {} personas loaded", count)
+
+        self._expert_router = ExpertRouter(
+            registry=self._expert_registry,
+            auto_route=experts_cfg.auto_route,
+            provider_manager=self._provider_mgr if experts_cfg.auto_route else None,
         )
 
         # Register the inbound message handler on the bus.
@@ -131,9 +157,26 @@ class Gateway:
         await channel.send_typing(inbound.chat_id)
 
         try:
+            # Route through the expert system.
+            route_result = await self._expert_router.route(
+                inbound.content, session_key=inbound.session_key
+            )
+
+            # If the router returned a listing (e.g. /experts command),
+            # send it directly without going through the agent.
+            if route_result.source == "command" and route_result.persona is None:
+                outbound = OutboundMessage(
+                    channel=inbound.channel,
+                    chat_id=inbound.chat_id,
+                    content=route_result.cleaned_message,
+                )
+                await channel.send_with_retry(outbound)
+                return outbound
+
             response_text = await self._agent.run(
-                inbound.content,
+                route_result.cleaned_message,
                 session_key=inbound.session_key,
+                expert_persona=route_result.persona,
             )
             outbound = OutboundMessage(
                 channel=inbound.channel,
@@ -193,6 +236,42 @@ class Gateway:
                 self._channel_mgr.register(SlackChannel(_to_dict(sl_cfg), self._bus))
             except ImportError:
                 logger.warning("Slack deps not installed -- skipping channel")
+
+        fs_cfg = channels_extra.get("feishu")
+        if fs_cfg and _is_enabled(fs_cfg):
+            try:
+                from ultrabot.channels.feishu import FeishuChannel
+
+                self._channel_mgr.register(FeishuChannel(_to_dict(fs_cfg), self._bus))
+            except ImportError:
+                logger.warning("Feishu deps not installed -- skipping channel")
+
+        qq_cfg = channels_extra.get("qq")
+        if qq_cfg and _is_enabled(qq_cfg):
+            try:
+                from ultrabot.channels.qq import QQChannel
+
+                self._channel_mgr.register(QQChannel(_to_dict(qq_cfg), self._bus))
+            except ImportError:
+                logger.warning("QQ deps not installed -- skipping channel")
+
+        wc_cfg = channels_extra.get("wecom")
+        if wc_cfg and _is_enabled(wc_cfg):
+            try:
+                from ultrabot.channels.wecom import WecomChannel
+
+                self._channel_mgr.register(WecomChannel(_to_dict(wc_cfg), self._bus))
+            except ImportError:
+                logger.warning("WeCom deps not installed -- skipping channel")
+
+        wx_cfg = channels_extra.get("weixin")
+        if wx_cfg and _is_enabled(wx_cfg):
+            try:
+                from ultrabot.channels.weixin import WeixinChannel
+
+                self._channel_mgr.register(WeixinChannel(_to_dict(wx_cfg), self._bus))
+            except ImportError:
+                logger.warning("WeChat deps not installed -- skipping channel")
 
     # ------------------------------------------------------------------
     # Shutdown

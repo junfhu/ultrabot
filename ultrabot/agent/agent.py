@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from loguru import logger
 
-from ultrabot.agent.prompts import build_system_prompt
+from ultrabot.agent.prompts import build_expert_system_prompt, build_system_prompt
 from ultrabot.tools.base import ToolRegistry
+
+if TYPE_CHECKING:
+    from ultrabot.experts.parser import ExpertPersona
 
 
 # ------------------------------------------------------------------
@@ -66,6 +69,7 @@ class Agent:
         media: list[str] | None = None,
         on_content_delta: ContentDeltaCB = None,
         on_tool_hint: ToolHintCB = None,
+        expert_persona: "ExpertPersona | None" = None,
     ) -> str:
         """Process a single user turn and return the assistant's text reply.
 
@@ -82,6 +86,10 @@ class Agent:
         on_tool_hint:
             Callback invoked with ``(tool_name, tool_call_id)`` when the
             agent begins executing a tool so the front-end can show progress.
+        expert_persona:
+            Optional :class:`ExpertPersona` to activate for this turn.
+            When provided the system prompt is replaced with the expert's
+            persona definition combined with tool-use instructions.
 
         Returns
         -------
@@ -108,7 +116,7 @@ class Agent:
                 session_key,
             )
 
-            messages = self._prepare_messages(session)
+            messages = self._prepare_messages(session, expert_persona=expert_persona)
 
             # Call the LLM provider.
             response = await self._provider.chat_stream_with_retry(
@@ -228,19 +236,36 @@ class Agent:
     # Prompt / message construction
     # ------------------------------------------------------------------
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(
+        self,
+        expert_persona: "ExpertPersona | None" = None,
+    ) -> str:
         workspace = getattr(self._config, "workspace_path", None)
         tz = getattr(self._config, "timezone", None)
+        if expert_persona is not None:
+            return build_expert_system_prompt(
+                persona=expert_persona,
+                config=self._config,
+                workspace_path=workspace,
+                tz=tz,
+            )
         return build_system_prompt(config=self._config, workspace_path=workspace, tz=tz)
 
     def _get_tool_definitions(self) -> list[dict[str, Any]]:
         """Return the list of OpenAI-format tool schemas from the registry."""
         return self._tools.get_definitions()
 
-    def _prepare_messages(self, session: Any) -> list[dict[str, Any]]:
+    def _prepare_messages(
+        self,
+        session: Any,
+        expert_persona: "ExpertPersona | None" = None,
+    ) -> list[dict[str, Any]]:
         """Build the full message list to send to the LLM, including the
         system prompt as the first message."""
-        system_msg = {"role": "system", "content": self._build_system_prompt()}
+        system_msg = {
+            "role": "system",
+            "content": self._build_system_prompt(expert_persona=expert_persona),
+        }
         return [system_msg] + session.get_messages()
 
     @staticmethod
