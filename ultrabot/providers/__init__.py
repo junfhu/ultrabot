@@ -17,6 +17,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ultrabot.providers.anthropic_provider import AnthropicProvider
+    from ultrabot.providers.auth_rotation import (
+        AuthProfile,
+        AuthRotator,
+        CredentialState,
+        execute_with_rotation,
+    )
     from ultrabot.providers.base import (
         GenerationSettings,
         LLMProvider,
@@ -38,6 +44,10 @@ __all__ = [
     "ProviderManager",
     "CircuitBreaker",
     "CircuitState",
+    "AuthProfile",
+    "AuthRotator",
+    "CredentialState",
+    "execute_with_rotation",
     "ProviderSpec",
     "PROVIDERS",
     "find_by_name",
@@ -77,6 +87,21 @@ def __getattr__(name: str):  # noqa: N807
     if name in ("CircuitBreaker", "CircuitState"):
         from ultrabot.providers.circuit_breaker import CircuitBreaker, CircuitState
         return CircuitBreaker if name == "CircuitBreaker" else CircuitState
+
+    if name in ("AuthProfile", "AuthRotator", "CredentialState", "execute_with_rotation"):
+        from ultrabot.providers.auth_rotation import (
+            AuthProfile,
+            AuthRotator,
+            CredentialState,
+            execute_with_rotation,
+        )
+        _map = {
+            "AuthProfile": AuthProfile,
+            "AuthRotator": AuthRotator,
+            "CredentialState": CredentialState,
+            "execute_with_rotation": execute_with_rotation,
+        }
+        return _map[name]
 
     if name in ("ProviderSpec", "PROVIDERS", "find_by_name", "find_by_keyword"):
         from ultrabot.providers.registry import (
