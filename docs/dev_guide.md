@@ -10,11 +10,45 @@ This guide takes you from "hello LLM" to a full multi-provider, multi-channel AI
 
 ## Prerequisites
 
-- **Python 3.11+** (3.12 recommended)
-- **An OpenAI API key** (set as `OPENAI_API_KEY` environment variable)
+- **pyenv** (Python version manager) — we use it throughout the guide
+- **Python 3.12** (installed via pyenv)
+- **An OpenAI-compatible API key** (OpenAI, DeepSeek, or any compatible provider)
 - **A text editor** (VS Code, PyCharm, vim — anything works)
 
 That's it. No build tools, no package managers, no frameworks. We add complexity only when you need it.
+
+### Why pyenv?
+
+System Python is unreliable — different OS versions ship different Python
+versions, and modifying it can break system tools. `pyenv` gives you full
+control: install any Python version, switch between them, and create
+isolated environments. Every professional Python project should use it.
+
+Quick install (if you don't have it yet):
+
+```bash
+# macOS
+brew install pyenv
+
+# Linux
+curl https://pyenv.run | bash
+```
+
+Then add to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.):
+
+```bash
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+```
+
+Restart your shell, then:
+
+```bash
+pyenv install 3.12
+pyenv global 3.12
+python --version  # Python 3.12.x
+```
 
 ## How to Use This Guide
 
@@ -108,7 +142,19 @@ ultrabot/
 All you need for Session 1:
 
 ```bash
+# Install Python 3.12 via pyenv (if not already done)
+pyenv install 3.12
+pyenv global 3.12
+
+# Create a project directory and virtual environment
+mkdir ultrabot && cd ultrabot
+python -m venv .venv
+source .venv/bin/activate
+
+# Install the only dependency
 pip install openai
+
+# Set your API key
 export OPENAI_API_KEY="sk-..."
 ```
 
@@ -135,6 +181,27 @@ Turn the page.
 
 **New files:**
 - `chat.py` -- a single-file chatbot you can run immediately
+
+### Step 0: Set up Python 3.12 with pyenv
+
+We use `pyenv` to manage Python versions throughout this guide. If you
+haven't set it up yet, see the [Introduction](00-introduction.md#why-pyenv).
+
+```bash
+# Install Python 3.12 (skip if already installed)
+pyenv install 3.12
+pyenv global 3.12
+
+# Create the project directory and a virtual environment
+mkdir -p ultrabot && cd ultrabot
+python -m venv .venv
+source .venv/bin/activate
+
+# Verify
+python --version  # Python 3.12.x
+```
+
+> **Always activate the venv** before working: `source .venv/bin/activate`
 
 ### Step 1: Install the only dependency
 

@@ -11,6 +11,27 @@
 **新建文件：**
 - `chat.py` -- 一个可以立即运行的单文件聊天机器人
 
+### 步骤 0：使用 pyenv 安装 Python 3.12
+
+本指南全程使用 `pyenv` 管理 Python 版本。如果你还没有安装，
+请参阅[介绍页](00-introduction.md#为什么用-pyenv)。
+
+```bash
+# 安装 Python 3.12（如果已安装可跳过）
+pyenv install 3.12
+pyenv global 3.12
+
+# 创建项目目录和虚拟环境
+mkdir -p ultrabot && cd ultrabot
+python -m venv .venv
+source .venv/bin/activate
+
+# 验证
+python --version  # Python 3.12.x
+```
+
+> **每次开始工作前都要激活虚拟环境：** `source .venv/bin/activate`
+
 ### 步骤 1：安装唯一的依赖
 
 ```bash

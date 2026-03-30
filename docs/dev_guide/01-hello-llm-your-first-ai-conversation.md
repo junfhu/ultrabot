@@ -11,6 +11,27 @@
 **New files:**
 - `chat.py` -- a single-file chatbot you can run immediately
 
+### Step 0: Set up Python 3.12 with pyenv
+
+We use `pyenv` to manage Python versions throughout this guide. If you
+haven't set it up yet, see the [Introduction](00-introduction.md#why-pyenv).
+
+```bash
+# Install Python 3.12 (skip if already installed)
+pyenv install 3.12
+pyenv global 3.12
+
+# Create the project directory and a virtual environment
+mkdir -p ultrabot && cd ultrabot
+python -m venv .venv
+source .venv/bin/activate
+
+# Verify
+python --version  # Python 3.12.x
+```
+
+> **Always activate the venv** before working: `source .venv/bin/activate`
+
 ### Step 1: Install the only dependency
 
 ```bash

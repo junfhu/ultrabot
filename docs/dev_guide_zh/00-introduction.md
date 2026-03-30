@@ -10,11 +10,44 @@
 
 ## 前置条件
 
-- **Python 3.11+**（推荐 3.12）
-- **一个 OpenAI API 密钥**（设置为 `OPENAI_API_KEY` 环境变量）
+- **pyenv**（Python 版本管理器）—— 本指南全程使用
+- **Python 3.12**（通过 pyenv 安装）
+- **一个 OpenAI 兼容的 API 密钥**（OpenAI、DeepSeek 或任何兼容提供者）
 - **一个文本编辑器**（VS Code、PyCharm、vim —— 什么都行）
 
 就这些。不需要构建工具，不需要包管理器，不需要框架。只有当你需要时，我们才会增加复杂度。
+
+### 为什么用 pyenv？
+
+系统自带的 Python 不可靠 —— 不同操作系统版本自带不同的 Python 版本，
+修改它可能会破坏系统工具。`pyenv` 让你完全掌控：安装任意 Python 版本、
+在它们之间切换、创建隔离环境。每个专业的 Python 项目都应该使用它。
+
+快速安装（如果你还没有的话）：
+
+```bash
+# macOS
+brew install pyenv
+
+# Linux
+curl https://pyenv.run | bash
+```
+
+然后添加到你的 shell 配置文件（`~/.bashrc`、`~/.zshrc` 等）：
+
+```bash
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+```
+
+重启 shell，然后：
+
+```bash
+pyenv install 3.12
+pyenv global 3.12
+python --version  # Python 3.12.x
+```
 
 ## 如何使用本指南
 
@@ -108,7 +141,19 @@ ultrabot/
 课程 1 你只需要：
 
 ```bash
+# 通过 pyenv 安装 Python 3.12（如果尚未安装）
+pyenv install 3.12
+pyenv global 3.12
+
+# 创建项目目录和虚拟环境
+mkdir ultrabot && cd ultrabot
+python -m venv .venv
+source .venv/bin/activate
+
+# 安装唯一的依赖
 pip install openai
+
+# 设置你的 API 密钥
 export OPENAI_API_KEY="sk-..."
 ```
 
