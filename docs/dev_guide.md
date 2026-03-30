@@ -154,9 +154,20 @@ source .venv/bin/activate
 # Install the only dependency
 pip install openai
 
-# Set your API key
+# Set your API key (required)
 export OPENAI_API_KEY="sk-..."
+
+# Optional: point to any OpenAI-compatible provider
+# export OPENAI_BASE_URL="https://api.deepseek.com"  # DeepSeek
+# export OPENAI_BASE_URL="http://localhost:11434/v1"  # Ollama
+# export MODEL="deepseek-chat"                        # default: gpt-4o-mini
 ```
+
+| Env Var | Purpose | Default |
+|---------|---------|---------|
+| `OPENAI_API_KEY` | API key for the provider | *(required)* |
+| `OPENAI_BASE_URL` | Base URL of the provider | `https://api.openai.com/v1` |
+| `MODEL` | Model name to use | `gpt-4o-mini` |
 
 Turn the page.
 # UltraBot Developer Guide -- Part 1 (Sessions 1-8)
