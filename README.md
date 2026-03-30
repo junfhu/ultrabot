@@ -22,6 +22,26 @@
 | **配置热重载** | 基于文件监听的配置重载，并支持通过 Pydantic Settings 叠加环境变量。 |
 | **Cron 调度器** | 可用 cron 表达式调度周期性 Agent 任务。 |
 | **健康监控** | 提供心跳服务，定期检查各 LLM 提供商健康状态。 |
+| **消息分块** | 按渠道感知的消息分割，支持 Markdown 代码块保护。各渠道有独立的长度限制（Telegram=4096、Discord=2000 等）。 |
+| **凭证轮换** | 多 API Key 轮换，支持 round-robin 策略与限流检测。当一个 Key 被限速时自动切换。 |
+| **用量与费用追踪** | 按提供商、模型和会话维度追踪 token 使用量和 API 调用费用。支持 JSON 持久化和 FIFO 淘汰。 |
+| **媒体管道** | 下载、缓存、处理多媒体文件。支持 SSRF 安全抓取、自适应图片缩放、PDF 文本提取。 |
+| **配置迁移与诊断** | 版本化配置迁移系统 + `doctor` 健康检查工具，可自动修复常见配置问题。 |
+| **群组激活模式** | 可配置群聊中的激活方式：仅 @提及 或始终响应。支持 `/activation` 命令切换。 |
+| **DM 配对** | 基于验证码的安全配对机制，支持 CLOSED/PAIRING/OPEN 三种策略和 TTL 过期。 |
+| **守护进程管理** | 生成 systemd unit 或 launchd plist 文件，支持 install/start/stop/restart/status 管理。 |
+| **记忆与上下文引擎** | 基于 SQLite + FTS5 的长期记忆存储，支持全文搜索、内容去重、时间衰减评分。 |
+| **自更新** | 自动检测 git/pip 安装方式并执行更新，支持 stable/beta/dev 通道。 |
+| **上下文压缩** | 使用辅助 LLM 将对话历史压缩为结构化摘要（目标/进展/决策/文件/下一步），保留首尾消息。 |
+| **Anthropic 提示缓存** | 在系统提示和最近 3 条消息上放置 `cache_control` 断点，节省 ~75% 输入 token 费用。 |
+| **子 Agent 委派** | 可生成受限工具集的独立子 Agent 执行子任务，父 Agent 仅接收摘要结果。 |
+| **提示注入检测** | 扫描上下文文件中的覆盖指令、不可见 Unicode、HTML 注入和凭证窃取模式。 |
+| **凭证脱敏** | 自动将日志中的 API Key、Bearer Token、AWS 密钥等替换为 `[REDACTED]`。支持 loguru 过滤器。 |
+| **辅助 LLM** | 使用廉价/快速模型处理非关键任务（摘要、标题生成、分类），节约主模型费用。 |
+| **浏览器自动化** | 基于 Playwright 的完整浏览器控制：导航、点击、输入、滚动、截图。6 个工具。 |
+| **工具集组合** | 命名工具分组，可按场景启用/禁用。内置 file_ops、code、web、all 四组。 |
+| **会话标题生成** | 使用辅助 LLM 自动为会话生成简短描述性标题，失败时回退到首条消息。 |
+| **CLI 主题引擎** | 数据驱动的 YAML 主题系统。内置 default/dark/light/mono 四套主题，支持自定义。 |
 
 ## 架构
 
@@ -29,7 +49,11 @@
 ultrabot/
 ├── agent/          # 核心 Agent 与工具调用循环
 │   ├── agent.py    # 支持并行工具执行的 Agent 类
-│   └── prompts.py  # 系统提示词构建 + 专家提示词注入
+│   ├── prompts.py  # 系统提示词构建 + 专家提示词注入
+│   ├── auxiliary.py       # 辅助 LLM 客户端（低成本任务）
+│   ├── context_compressor.py  # LLM 驱动的上下文压缩
+│   ├── delegate.py        # 子 Agent 委派
+│   └── title_generator.py # 会话标题自动生成
 ├── bus/            # 带死信队列的优先级消息总线
 │   ├── events.py   # InboundMessage / OutboundMessage
 │   └── queue.py    # MessageBus 与优先级队列
@@ -41,15 +65,22 @@ ultrabot/
 │   ├── feishu.py   # 飞书 / Lark（lark-oapi，WebSocket）
 │   ├── qq.py       # QQ Bot（qq-botpy，WebSocket）
 │   ├── wecom.py    # 企业微信（wecom-aibot-sdk，WebSocket）
-│   └── weixin.py   # 微信（HTTP long-poll，AES 媒体）
+│   ├── weixin.py   # 微信（HTTP long-poll，AES 媒体）
+│   ├── group_activation.py  # 群组激活模式（@提及/始终）
+│   └── pairing.py           # DM 配对（验证码 + TTL）
+├── chunking/      # 按渠道的消息分块
 ├── cli/            # CLI 命令（Typer）
 │   ├── commands.py # onboard、agent、gateway、status、experts
-│   └── stream.py   # 终端流式渲染器
+│   ├── stream.py   # 终端流式渲染器
+│   └── themes.py            # CLI 主题引擎（YAML 驱动）
 ├── config/         # 基于 Pydantic 的配置与热重载
 │   ├── schema.py   # 全部配置 schema
 │   ├── loader.py   # 加载 / 保存 / 监听配置
-│   └── paths.py    # 路径工具
+│   ├── paths.py    # 路径工具
+│   ├── migrations.py  # 版本化配置迁移
+│   └── doctor.py      # 配置诊断与修复
 ├── cron/           # Cron 任务调度器
+├── daemon/        # 守护进程管理（systemd/launchd）
 ├── experts/        # 专家人格系统（内置 170 个专家）
 │   ├── parser.py   # 将 Markdown 人格解析为 ExpertPersona
 │   ├── registry.py # 加载、索引、搜索专家
@@ -59,19 +90,29 @@ ultrabot/
 ├── gateway/        # 网关服务编排
 ├── heartbeat/      # 提供商健康监控
 ├── mcp/            # MCP 客户端（stdio + HTTP）
+├── media/         # 媒体管道（抓取、缓存、图片处理、PDF）
+├── memory/        # 长期记忆（SQLite + FTS5）
 ├── providers/      # LLM 提供商抽象层
 │   ├── base.py     # 带重试的 LLMProvider ABC
 │   ├── circuit_breaker.py  # 熔断器模式
 │   ├── manager.py  # 带故障转移的 ProviderManager
 │   ├── registry.py # 提供商注册表（12+ 提供商）
 │   ├── openai_compat.py    # OpenAI 兼容提供商
-│   └── anthropic_provider.py # Anthropic 原生提供商
+│   ├── anthropic_provider.py # Anthropic 原生提供商
+│   ├── auth_rotation.py   # 凭证轮换
+│   └── prompt_cache.py    # Anthropic 提示缓存
 ├── security/       # 限流、访问控制、输入清洗
+│   ├── injection_detector.py  # 提示注入检测
+│   └── redact.py              # 凭证脱敏
 ├── session/        # 持久化会话管理
 ├── skills/         # 支持热重载的插件系统
 ├── tools/          # 内置工具 + 注册表
 │   ├── base.py     # Tool ABC + ToolRegistry
-│   └── builtin.py  # 8 个内置工具
+│   ├── builtin.py  # 8 个内置工具
+│   ├── browser.py   # 浏览器自动化（6 个工具）
+│   └── toolsets.py  # 工具集分组与组合
+├── updater/       # 自更新系统
+├── usage/         # 用量与费用追踪
 ├── utils/          # 帮助函数与通用工具
 ├── webui/          # Web UI 控制台（FastAPI + WebSocket）
 │   ├── app.py      # REST API + WebSocket 流式后端
@@ -412,6 +453,13 @@ ultrabot 会根据模型名自动识别 provider，你也可以显式设置 `pro
 | `delete_file` | 删除文件 |
 | `exec_shell` | 在超时控制下执行 shell 命令 |
 | `python_repl` | 在隔离子进程中执行 Python 代码 |
+| `browser_navigate` | 导航到指定 URL 并返回页面标题和内容 |
+| `browser_snapshot` | 获取当前页面文本快照 |
+| `browser_click` | 点击 CSS 选择器指定的元素 |
+| `browser_type` | 在输入框中输入文本 |
+| `browser_scroll` | 页面滚动（上/下） |
+| `browser_close` | 关闭浏览器实例 |
+| `delegate_task` | 委派子任务给受限子 Agent |
 
 所有文件与 shell 工具都被限制在配置的工作区目录中运行。
 
@@ -495,6 +543,7 @@ export ULTRABOT_EXPERTS__AUTO_ROUTE=true
 
 - **[高层设计（HLD）](docs/HLD.md)**：系统架构、组件概览、数据流、设计模式
 - **[低层设计（LLD）](docs/LLD.md)**：详细类设计、算法、状态机、时序图
+- **[用户手册](docs/user_manual.md)**：完整的使用指南，涵盖安装、配置、CLI 命令、所有功能模块
 
 ## 开发
 
@@ -502,7 +551,7 @@ export ULTRABOT_EXPERTS__AUTO_ROUTE=true
 # 安装开发依赖
 pip install -e ".[dev]"
 
-# 运行测试（196 个测试）
+# 运行测试（732 个测试）
 pytest
 
 # 带覆盖率运行
@@ -516,13 +565,13 @@ ruff check ultrabot/
 
 | 指标 | 数值 |
 |------|------|
-| Python 源码文件 | 57 |
-| 代码行数 | ~11,765 |
-| 测试文件 | 13 |
-| 测试用例 | 196 |
+| Python 源码文件 | 77 |
+| 代码行数 | ~17,284 |
+| 测试文件 | 33 |
+| 测试用例 | 732 |
 | LLM providers | 12+ |
 | 聊天渠道 | 7 |
-| 内置工具 | 8 |
+| 内置工具 | 15 |
 | 专家人格 | 170 |
 | 专家部门 | 17 |
 
@@ -542,7 +591,16 @@ ruff check ultrabot/
 | 渠道数量 | 12+ | 7（基础类可扩展） |
 | 专家系统 | 否 | 170 个专家，17 个部门 |
 | Web UI | 否 | 是（FastAPI + WebSocket 流式） |
-| 代码规模 | ~5000 行 | ~11,765 行 |
+| 上下文压缩 | 否 | 是（LLM 结构化摘要） |
+| 浏览器自动化 | 否 | 是（Playwright，6 工具） |
+| 提示注入检测 | 否 | 是 |
+| 子 Agent 委派 | 否 | 是 |
+| 提示缓存 | 否 | 是（Anthropic ~75% 节省） |
+| 媒体处理 | 否 | 是（图片/PDF） |
+| 用量追踪 | 否 | 是（token 与费用） |
+| 凭证脱敏 | 否 | 是 |
+| 自更新 | 否 | 是（git/pip） |
+| 代码规模 | ~5000 行 | ~17,284 行 |
 | Python | >=3.11 | >=3.11 |
 
 ## 许可证

@@ -51,8 +51,16 @@ The framework ships with:
   access control, TTL-managed sessions, cron scheduling, heartbeat monitoring,
   and a zero-build-step Web UI.
 
-The codebase spans **57 source files (~11,765 LOC)** with **196 passing tests**
-across 13 test modules (~2,468 LOC).
+- **A media pipeline** for fetching, caching, and processing images and PDFs with SSRF protection.
+- **LLM-powered context compression** that creates structured summaries when approaching context limits.
+- **Prompt caching** (Anthropic) achieving ~75% input token cost reduction.
+- **Subagent delegation** spawning isolated child agents with restricted toolsets.
+- **Security hardening** including prompt injection detection, credential redaction, and auth profile rotation.
+- **Browser automation** via Playwright with 6 browsing tools.
+- **Usage and cost tracking** per provider, model, and session.
+
+The codebase spans **77 source files (~17,284 LOC)** with **732 passing tests**
+across 33 test modules (~8,568 LOC).
 
 ---
 
@@ -163,9 +171,10 @@ running the main event loop.
 | Tool   | | Provider       |
 | Registry| | Manager        |
 | - built-| | - Circuit      |
-|   in 8  | |   breaker      |
+|   in 15 | |   breaker      |
 | - MCP   | | - Failover     |
 | - skills| | - Retry        |
+| - browser| | - Prompt cache |
 +---------+ +----------------+
 
 +======================== BACKGROUND SERVICES ===========================+
@@ -189,6 +198,9 @@ running the main event loop.
 | **Tool System**     | Built-in tools, MCP bridge, hot-reload skills          |
 | **Provider Mgmt**   | Multi-LLM failover, circuit breakers, retry            |
 | **Background**      | Heartbeat monitoring, scheduled jobs                   |
+| **AI Ops**          | Context compression, prompt caching, cost tracking      |
+| **Media**           | Fetch, cache, resize images, extract PDF text            |
+| **Advanced Security** | Injection detection, credential redaction, auth rotation |
 
 ---
 
@@ -637,6 +649,186 @@ The skills system provides a hot-reloadable plugin mechanism:
 | `ultrabot experts search` | Full-text search across personas           |
 | `ultrabot experts sync`   | Download personas from GitHub              |
 
+### 4.18 Message Chunking
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `chunking/chunker.py`                          |
+| **Role**       | Split long messages for per-channel limits      |
+
+Splits outgoing messages respecting per-channel character limits (Telegram=4096, Discord=2000, Slack=4000, etc.). Two modes: LENGTH (hard split at limit) and PARAGRAPH (split at paragraph boundaries). Markdown code fence awareness prevents splitting inside code blocks.
+
+### 4.19 Auth Profile Rotation
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `providers/auth_rotation.py`                   |
+| **Role**       | Round-robin API key rotation with rate-limit detection |
+
+`AuthRotator` manages multiple `AuthProfile` credentials per provider. Uses round-robin selection with automatic skip of rate-limited keys. `execute_with_rotation()` async helper retries with the next available profile on failure.
+
+### 4.20 Usage and Cost Tracking
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `usage/tracker.py`                             |
+| **Role**       | Track token usage and API costs                |
+
+`UsageTracker` records per-call token usage with provider/model/session breakdown. Built-in pricing dictionary covers major providers. Supports JSON persistence with FIFO eviction (configurable max records). `get_summary()` provides aggregated cost/token reports.
+
+### 4.21 Media Pipeline
+
+| Attribute      | Detail                                          |
+|----------------|--------------------------------------------------|
+| **Files**      | `media/store.py`, `media/fetch.py`, `media/image_ops.py`, `media/pdf_extract.py` |
+| **Role**       | Download, cache, and process multimedia          |
+
+Four cooperating modules: `MediaStore` provides TTL-based file caching. `fetch` downloads with SSRF protection (blocks private IP ranges). `image_ops` provides adaptive resizing via Pillow. `pdf_extract` extracts text from PDFs via pypdf.
+
+### 4.22 Config Migration and Doctor
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **Files**      | `config/migrations.py`, `config/doctor.py`     |
+| **Role**       | Versioned config migration and health checking |
+
+`apply_migrations()` runs an ordered list of migration functions that transform config dicts between versions (e.g., renaming keys, restructuring sections). `doctor` runs health checks (API key presence, endpoint reachability, directory permissions) and can auto-repair common issues.
+
+### 4.23 Group Activation Modes
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `channels/group_activation.py`                 |
+| **Role**       | Control when the bot responds in group chats   |
+
+Two modes: `MENTION` (only respond when @mentioned) and `ALWAYS` (respond to every message). Per-session mode storage. `check_activation()` is the main entry point called by channel adapters. Supports `/activation` command for mode switching.
+
+### 4.24 DM Pairing
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `channels/pairing.py`                          |
+| **Role**       | Secure user verification for DM conversations  |
+
+Three policies: `CLOSED` (no new pairings), `PAIRING` (code-based verification), `OPEN` (accept all). `PairingManager` generates time-limited codes, verifies them, and persists approved pairings to JSON.
+
+### 4.25 Daemon Management
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `daemon/manager.py`                            |
+| **Role**       | OS-level service management                    |
+
+Generates systemd unit files (Linux) or launchd plist files (macOS). Functions: `install()`, `uninstall()`, `start()`, `stop()`, `restart()`, `status()`. Detects platform automatically.
+
+### 4.26 Memory and Context Engine
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `memory/store.py`                              |
+| **Role**       | Long-term memory with full-text search         |
+
+`MemoryStore` uses SQLite with FTS5 for keyword search. Content-hash deduplication prevents duplicate entries. Temporal decay scoring (exponential half-life) ranks recent memories higher. `ContextEngine` provides `ingest()` for storing messages and `retrieve_context()` for fetching relevant memories.
+
+### 4.27 Self-Update System
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `updater/update.py`                            |
+| **Role**       | Detect and apply updates                       |
+
+Auto-detects installation method (git clone vs pip install). `check_update()` queries for available updates. `run_update()` executes git pull + pip install or pip upgrade. Supports stable/beta/dev channels.
+
+### 4.28 Auxiliary LLM Client
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `agent/auxiliary.py`                           |
+| **Role**       | Cheap/fast model for non-critical tasks        |
+
+`AuxiliaryClient` uses httpx to call OpenAI-compatible endpoints. Convenience methods: `summarize()`, `generate_title()`, `classify()`. All methods return empty string on failure for graceful degradation. Used by context compressor and title generator.
+
+### 4.29 Context Compression
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `agent/context_compressor.py`                  |
+| **Role**       | LLM-powered conversation summarization         |
+
+`ContextCompressor` protects head (system prompt + first exchange) and tail (recent messages), sends the middle to the auxiliary LLM with a structured template (Goal/Progress/Key Decisions/Files Modified/Next Steps). Replaces middle messages with a single summary message. Supports iterative re-compression.
+
+### 4.30 Prompt Caching
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `providers/prompt_cache.py`                    |
+| **Role**       | Reduce Anthropic API costs via caching         |
+
+`PromptCacheManager` implements the "system_and_3" strategy: places `cache_control: {"type": "ephemeral"}` breakpoints on the system prompt and last 3 messages. Also supports "system_only" and "none" strategies. `CacheStats` tracks hits/misses/savings.
+
+### 4.31 Subagent Delegation
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **Files**      | `agent/delegate.py`, `tools/toolsets.py`       |
+| **Role**       | Spawn isolated child agents for subtasks       |
+
+`DelegateTaskTool` creates a fresh `Agent` with restricted toolsets (resolved via `ToolsetManager`). Child runs with timeout and iteration limits. Parent receives only the final summary via `DelegationResult`. Built-in toolsets: `file_ops`, `code`, `web`, `all`.
+
+### 4.32 Prompt Injection Detection
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `security/injection_detector.py`               |
+| **Role**       | Detect malicious content in context files      |
+
+`InjectionDetector` scans for: override patterns ("ignore previous instructions"), invisible Unicode (zero-width spaces, RTL overrides), HTML comment injection, credential exfiltration URLs, base64-encoded suspicious payloads. Returns `InjectionWarning` with category, severity, and span.
+
+### 4.33 Credential Redaction
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `security/redact.py`                           |
+| **Role**       | Strip secrets from log output                  |
+
+13 compiled regex patterns covering OpenAI, Slack, GitHub, AWS, Google, Stripe, SendGrid, HuggingFace tokens, Bearer headers, and generic secrets. `RedactingFilter` integrates with loguru. `install_redaction()` convenience function.
+
+### 4.34 Browser Automation
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `tools/browser.py`                             |
+| **Role**       | Web browsing via Playwright                    |
+
+6 tools: `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_scroll`, `browser_close`. `_BrowserManager` singleton manages headless Chromium lifecycle. All Playwright imports are lazy — module works without playwright installed (returns install instructions).
+
+### 4.35 Toolset Composition
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `tools/toolsets.py`                            |
+| **Role**       | Named tool groups for context-aware tooling    |
+
+`ToolsetManager` registers named `Toolset` groups. Built-in sets: `file_ops` (read/write/list), `code` (exec/python), `web` (search), `all` (everything). `resolve()` returns the union of tools from specified sets. Used by subagent delegation for tool restriction.
+
+### 4.36 Session Title Generation
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `agent/title_generator.py`                     |
+| **Role**       | Auto-generate human-readable session titles    |
+
+Uses the auxiliary LLM to generate a 3-7 word title from the first 4 messages. `_clean_title()` strips quotes, periods, and prefixes. Falls back to truncated first user message on failure.
+
+### 4.37 CLI Theme Engine
+
+| Attribute      | Detail                                         |
+|----------------|------------------------------------------------|
+| **File**       | `cli/themes.py`                                |
+| **Role**       | Data-driven CLI theming                        |
+
+`ThemeManager` serves built-in themes (default, dark, light, mono) and loads user YAML themes from a configurable directory. `Theme` dataclass composes `ThemeColors`, `ThemeSpinner`, and `ThemeBranding`. YAML serialization via PyYAML (lazy import).
+
 ---
 
 ## 5. Data Flow — Message Lifecycle
@@ -998,7 +1190,7 @@ Ultrabot is designed for extensibility at four primary axes.
 | MCP transport   | stdio / HTTP+SSE          |
 | Data validation | Pydantic                  |
 | File format     | JSON (sessions, config, cron) |
-| Testing         | pytest (196 tests)        |
+| Testing         | pytest (732 tests)        |
 
 ---
 
@@ -1117,15 +1309,15 @@ turn. In practice, LLMs are effective at expressing parallelisable batches.
 
 | Metric                  | Value          |
 |-------------------------|----------------|
-| Source files            | 57             |
-| Source lines of code    | ~11,765        |
-| Test files              | 13             |
-| Test lines of code      | ~2,468         |
-| Passing tests           | 196            |
+| Source files            | 77             |
+| Source lines of code    | ~17,284        |
+| Test files              | 33             |
+| Test lines of code      | ~8,568         |
+| Passing tests           | 732            |
 | Expert personas         | 170            |
 | Departments             | 17             |
 | Channel adapters        | 7              |
-| Built-in tools          | 8              |
+| Built-in tools          | 15             |
 
 ### 12.2 Design Patterns Reference
 
@@ -1146,6 +1338,12 @@ turn. In practice, LLMs are effective at expressing parallelisable batches.
 | Streaming Callback      | Agent loop                    | Incremental response delivery  |
 | Facade                  | SecurityGuard                 | Unified security interface     |
 | Hot Reload              | Config loader, skills manager | Runtime updates without restart|
+| Structured Summary      | Context compressor            | Preserve context via LLM      |
+| Prompt Caching          | Prompt cache manager          | Token cost reduction           |
+| Delegation              | Subagent delegate             | Isolated subtask execution     |
+| Singleton               | Browser manager               | Shared browser lifecycle       |
+| Temporal Decay          | Memory store                  | Recency-biased search ranking  |
+| Data-Driven Theme       | CLI theme engine              | YAML-configurable appearance   |
 
 ### 12.3 Glossary
 
@@ -1161,6 +1359,14 @@ turn. In practice, LLMs are effective at expressing parallelisable batches.
 | **Message Bus**   | The async queue connecting channels to the agent          |
 | **Circuit Breaker**| A state machine protecting against cascading failures    |
 | **MCP**           | Model Context Protocol — a standard for tool servers      |
+| **Auxiliary LLM**  | A secondary, cheap model used for summarization and classification |
+| **Context Compression** | LLM-powered summarization of conversation history to fit context limits |
+| **Prompt Cache**   | Anthropic cache_control mechanism reducing repeated token costs |
+| **Subagent**       | An isolated child agent spawned to handle a delegated subtask |
+| **Toolset**        | A named group of tools that can be enabled/disabled together |
+| **Injection Detection** | Scanning input for prompt override attempts and malicious patterns |
+| **Redaction**      | Automatic removal of secrets/credentials from log output |
+| **Media Pipeline** | The fetch → cache → process chain for handling multimedia files |
 
 ---
 

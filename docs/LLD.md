@@ -52,6 +52,26 @@ The document covers every subsystem of the ultrabot codebase:
 - Configuration (Pydantic v2 settings, hot-reload)
 - Gateway orchestrator (startup sequencing, signal handling)
 - Cron scheduler and heartbeat service
+- Message chunking (per-channel splitting)
+- Auth profile rotation
+- Usage and cost tracking
+- Media pipeline (fetch, cache, image processing, PDF extraction)
+- Config migration and doctor
+- Group activation modes
+- DM pairing system
+- Daemon management
+- Memory and context engine (SQLite + FTS5)
+- Self-update system
+- Auxiliary LLM client
+- Context compression (LLM-powered)
+- Prompt caching (Anthropic)
+- Subagent delegation
+- Prompt injection detection
+- Credential redaction
+- Browser automation (Playwright)
+- Toolset composition
+- Session title generation
+- CLI theme engine
 
 ### 1.3 References
 
@@ -137,14 +157,57 @@ ultrabot/                          Lines (approx.)
 +-- heartbeat/
 |   +-- __init__.py                      3
 |   +-- service.py                      95
-+-- tests/                            ~3200
-    +-- ... (196 passing tests)
++-- chunking/
+|   +-- __init__.py                      3
+|   +-- chunker.py                     145
++-- cli/
+|   +-- __init__.py                      3
+|   +-- themes.py                      280
++-- daemon/
+|   +-- __init__.py                      3
+|   +-- manager.py                     230
++-- media/
+|   +-- __init__.py                      3
+|   +-- store.py                       160
+|   +-- fetch.py                       110
+|   +-- image_ops.py                    95
+|   +-- pdf_extract.py                  70
++-- memory/
+|   +-- __init__.py                      3
+|   +-- store.py                       310
++-- updater/
+|   +-- __init__.py                      3
+|   +-- update.py                      185
++-- usage/
+|   +-- __init__.py                      3
+|   +-- tracker.py                     240
++-- tests/                            ~8,568
+    +-- ... (732 passing tests)
 ---------------------------------------------
-Total source (excl. tests):        ~11,765
-Total test code:                    ~3,200
+Total source (excl. tests):        ~17,284
+Total test code:                    ~8,568
 ```
 
-**57 Python source files. 196 tests passing. Python >= 3.11. Fully async
+Additional modules within existing packages:
+
+```
+ultrabot/agent/auxiliary.py            105   # AuxiliaryClient — cheap LLM for non-critical tasks
+ultrabot/agent/context_compressor.py   195   # ContextCompressor — structured summary compression
+ultrabot/agent/delegate.py             220   # DelegationRequest/Result, delegate(), DelegateTaskTool
+ultrabot/agent/title_generator.py       75   # generate_title() — auto session titles
+ultrabot/channels/group_activation.py  130   # ActivationMode, check_activation(), per-session modes
+ultrabot/channels/pairing.py           210   # PairingManager, PairingPolicy, code-based DM pairing
+ultrabot/config/migrations.py          120   # apply_migrations() — versioned config transforms
+ultrabot/config/doctor.py              155   # HealthCheck, doctor() — diagnose and repair config
+ultrabot/providers/auth_rotation.py    195   # AuthRotator, AuthProfile, round-robin key rotation
+ultrabot/providers/prompt_cache.py     170   # PromptCacheManager, CacheStats, system_and_3 strategy
+ultrabot/security/injection_detector.py 185  # InjectionDetector, InjectionWarning
+ultrabot/security/redact.py            140   # redact(), RedactingFilter, 13 secret patterns
+ultrabot/tools/browser.py             350   # 6 Playwright tools + _BrowserManager singleton
+ultrabot/tools/toolsets.py             195   # Toolset, ToolsetManager, built-in toolsets
+```
+
+**77 Python source files. 732 tests passing. Python >= 3.11. Fully async
 (asyncio).**
 
 ---
@@ -1150,6 +1213,1040 @@ interval. Logs results. No external API exposed.
 
 ---
 
+### 3.13 Message Chunking Subsystem
+
+#### 3.13.1 `MessageChunker` (chunking/chunker.py)
+
+```
++-------------------------------------------+
+|           MessageChunker                  |
++-------------------------------------------+
+| + CHANNEL_LIMITS: dict[str, int]          |
+|   {"telegram": 4096, "discord": 2000,     |
+|    "slack": 4000, "feishu": 4096,         |
+|    "qq": 4500, "wecom": 4096,             |
+|    "weixin": 2048, "default": 4096}       |
++-------------------------------------------+
+| + chunk(text, max_length?, mode?) -> list  |
+| - _chunk_length(text, max) -> list[str]   |
+| - _chunk_paragraph(text, max) -> list[str]|
+| - _detect_code_fences(text) -> list[tuple]|
++-------------------------------------------+
+```
+
+**`ChunkMode` Enum:**
+
+| Value       | Description |
+|-------------|-------------|
+| `LENGTH`    | Split at `max_length` boundaries, avoiding mid-word breaks |
+| `PARAGRAPH` | Split on blank lines / paragraph boundaries; fallback to LENGTH if a single paragraph exceeds `max_length` |
+
+**Method Contracts:**
+
+| Method              | Parameters                                                         | Returns       | Notes |
+|---------------------|--------------------------------------------------------------------|---------------|-------|
+| `chunk`             | `text: str, max_length: int \| None = None, mode: ChunkMode = LENGTH` | `list[str]` | If `max_length` is None, uses `CHANNEL_LIMITS.get(channel, 4096)`. Never splits inside code fences (` ``` `) unless the fence itself exceeds `max_length`. |
+| `_chunk_length`     | `text: str, max_length: int`                                      | `list[str]`   | Greedy forward split on whitespace boundaries. |
+| `_chunk_paragraph`  | `text: str, max_length: int`                                      | `list[str]`   | Splits on `\n\n` first, then merges consecutive paragraphs that fit within limit. |
+| `_detect_code_fences` | `text: str`                                                     | `list[tuple[int, int]]` | Returns `(start, end)` character offsets of fenced code blocks. |
+
+---
+
+### 3.14 Auth Rotation Subsystem
+
+#### 3.14.1 `CredentialState` Enum (providers/auth_rotation.py)
+
+| Value          | Description |
+|----------------|-------------|
+| `ACTIVE`       | Key is available for use |
+| `RATE_LIMITED`  | Key hit a rate limit; temporarily unavailable (cooldown period) |
+| `EXHAUSTED`    | Key has hit a hard quota or is revoked |
+
+#### 3.14.2 `AuthProfile` (providers/auth_rotation.py)
+
+```
++-------------------------------------+
+|      AuthProfile  (@dataclass)      |
++-------------------------------------+
+| + provider: str                     |
+| + api_key: str                      |
+| + state: CredentialState            |
+| + last_used: datetime | None        |
+| + cooldown_until: datetime | None   |
+| + request_count: int                |
++-------------------------------------+
+```
+
+#### 3.14.3 `AuthRotator` (providers/auth_rotation.py)
+
+```
++-------------------------------------------+
+|            AuthRotator                    |
++-------------------------------------------+
+| - _profiles: dict[str, list[AuthProfile]] |
+| - _index: dict[str, int]                 |
+| - _lock: asyncio.Lock                    |
++-------------------------------------------+
+| + add_profile(profile) -> None            |
+| + next_profile(provider) -> AuthProfile   |
+| + mark_rate_limited(profile, secs) -> None|
+| + mark_exhausted(profile) -> None         |
+| + active_count(provider) -> int           |
+| + execute_with_rotation(provider, fn)     |
+|     -> Any                                |
++-------------------------------------------+
+```
+
+**Method Contracts:**
+
+| Method                 | Parameters                                           | Returns         | Notes |
+|------------------------|------------------------------------------------------|-----------------|-------|
+| `add_profile`          | `profile: AuthProfile`                               | `None`          | Appends to the provider's profile list. |
+| `next_profile`         | `provider: str`                                      | `AuthProfile`   | Round-robin selection among `ACTIVE` profiles. Skips `RATE_LIMITED` profiles whose `cooldown_until` has not elapsed. Raises `RuntimeError` if no active profiles remain. |
+| `mark_rate_limited`    | `profile: AuthProfile, cooldown_seconds: float`      | `None`          | Sets `state = RATE_LIMITED`, `cooldown_until = utcnow() + cooldown_seconds`. |
+| `mark_exhausted`       | `profile: AuthProfile`                               | `None`          | Sets `state = EXHAUSTED`. Profile is permanently skipped. |
+| `active_count`         | `provider: str`                                      | `int`           | Count of profiles in `ACTIVE` or recoverable `RATE_LIMITED` state. |
+| `execute_with_rotation`| `provider: str, fn: Callable[[str], Awaitable[T]]`   | `T`             | Calls `fn(api_key)` with rotated key. On rate-limit error, marks profile and retries with next. Raises after all profiles exhausted. |
+
+---
+
+### 3.15 Usage Tracking Subsystem
+
+#### 3.15.1 `UsageRecord` (usage/tracker.py)
+
+```
++--------------------------------------+
+|   UsageRecord  (@dataclass, frozen)  |
++--------------------------------------+
+| + provider: str                      |
+| + model: str                         |
+| + input_tokens: int                  |
+| + output_tokens: int                 |
+| + cost: float                        |
+| + session_id: str | None             |
+| + timestamp: datetime                |
++--------------------------------------+
+```
+
+#### 3.15.2 `UsageTracker` (usage/tracker.py)
+
+```
++-------------------------------------------+
+|            UsageTracker                   |
++-------------------------------------------+
+| - _records: list[UsageRecord]             |
+| - _data_path: Path                        |
++-------------------------------------------+
+| + record(provider, model, input_tokens,   |
+|          output_tokens, session_id?) -> None|
+| + get_summary() -> dict                   |
+| + get_session_summary(session_id) -> dict |
+| + save() -> None                          |
+| + load() -> None                          |
++-------------------------------------------+
+```
+
+**Method Contracts:**
+
+| Method              | Parameters                                                    | Returns  | Notes |
+|---------------------|---------------------------------------------------------------|----------|-------|
+| `record`            | `provider: str, model: str, input_tokens: int, output_tokens: int, session_id: str \| None = None` | `None` | Creates a `UsageRecord`, calculates cost via `calculate_cost()`, appends to `_records`. |
+| `get_summary`       | *(none)*                                                      | `dict`   | Returns `{"total_cost": float, "total_input_tokens": int, "total_output_tokens": int, "by_provider": dict, "by_model": dict}`. |
+| `get_session_summary` | `session_id: str`                                           | `dict`   | Same shape as `get_summary()` but filtered to one session. |
+| `save`              | *(none)*                                                      | `None`   | Writes records as JSON lines to `_data_path`. |
+| `load`              | *(none)*                                                      | `None`   | Reads JSON lines from `_data_path`, populates `_records`. |
+
+#### 3.15.3 Helper Functions
+
+```python
+PRICING: dict[str, dict[str, float]]  # {model_prefix: {"input": $/1M, "output": $/1M}}
+
+def normalize_usage(raw: dict) -> tuple[int, int]:
+    """Extract (input_tokens, output_tokens) from provider-specific usage dicts."""
+
+def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Look up PRICING by longest-matching model prefix. Returns USD cost."""
+```
+
+---
+
+### 3.16 Media Pipeline Subsystem
+
+#### 3.16.1 `MediaStore` (media/store.py)
+
+```
++-------------------------------------------+
+|            MediaStore                     |
++-------------------------------------------+
+| - _cache_dir: Path                        |
+| - _ttl_seconds: int                       |
+| - _max_size_bytes: int                    |
++-------------------------------------------+
+| + store(key, data, ext?) -> Path          |
+| + get(key) -> Path | None                 |
+| + cleanup() -> int                        |
+| + size() -> int                           |
++-------------------------------------------+
+```
+
+**Method Contracts:**
+
+| Method    | Parameters                                             | Returns        | Notes |
+|-----------|--------------------------------------------------------|----------------|-------|
+| `store`   | `key: str, data: bytes, ext: str = ""`                 | `Path`         | Writes to `_cache_dir / hash(key){ext}`. Updates access time. |
+| `get`     | `key: str`                                             | `Path \| None` | Returns path if file exists and age < `_ttl_seconds`; else `None`. |
+| `cleanup` | *(none)*                                               | `int`          | Removes files older than TTL. Returns count removed. Enforces `_max_size_bytes` by LRU eviction. |
+| `size`    | *(none)*                                               | `int`          | Total bytes of cached files. |
+
+#### 3.16.2 `fetch` (media/fetch.py)
+
+```python
+async def fetch(url: str, *, max_bytes: int = 10_485_760, timeout: float = 30.0) -> bytes
+```
+
+| Aspect       | Detail |
+|-------------|--------|
+| **Pre-cond** | `url` is a valid HTTP(S) URL |
+| **Post-cond** | Returns response body bytes |
+| **Raises**   | `ValueError` if URL resolves to a private/loopback IP (SSRF protection); `httpx.HTTPError` on network failure; `ValueError` if response exceeds `max_bytes` |
+| **SSRF Protection** | Resolves hostname via `socket.getaddrinfo()` before connecting. Blocks RFC 1918 (`10.x`, `172.16-31.x`, `192.168.x`), loopback (`127.x`), link-local (`169.254.x`), and IPv6 equivalents. |
+
+#### 3.16.3 `adaptive_resize` (media/image_ops.py)
+
+```python
+def adaptive_resize(image_bytes: bytes, max_size: int = 1_048_576) -> bytes
+```
+
+| Aspect       | Detail |
+|-------------|--------|
+| **Pre-cond** | `image_bytes` is a valid image (JPEG, PNG, WebP, GIF) |
+| **Returns**  | Resized image bytes in original format. If already under `max_size`, returns input unchanged. |
+| **Algorithm** | Binary search on scale factor (0.1–1.0) to find largest image ≤ `max_size`. Uses Pillow `Image.resize()` with `LANCZOS` resampling. |
+
+#### 3.16.4 `extract_text` (media/pdf_extract.py)
+
+```python
+def extract_text(pdf_path: str | Path, *, max_pages: int = 50) -> str
+```
+
+| Aspect       | Detail |
+|-------------|--------|
+| **Pre-cond** | `pdf_path` points to a valid PDF file |
+| **Returns**  | Extracted plain text, pages joined by `\n\n---\n\n` |
+| **Library**  | `pypdf.PdfReader`. Extracts text page-by-page up to `max_pages`. |
+| **Raises**   | `FileNotFoundError` if path missing; `pypdf.errors.PdfReadError` for corrupt PDFs |
+
+---
+
+### 3.17 Config Migration Subsystem
+
+#### 3.17.1 `apply_migrations` (config/migrations.py)
+
+```python
+def apply_migrations(config_dict: dict, current_version: str) -> dict
+```
+
+| Aspect       | Detail |
+|-------------|--------|
+| **Pre-cond** | `config_dict` is a parsed YAML config dictionary |
+| **Returns**  | Migrated config dict with `version` field updated |
+| **Algorithm** | Maintains an ordered list of `(version, migration_fn)` tuples. Starting from `current_version`, applies each migration function in sequence. Each migration receives and returns a `dict`. |
+| **Side Effects** | None (pure function). |
+
+**Migration Registry:**
+
+```python
+MIGRATIONS: list[tuple[str, Callable[[dict], dict]]] = [
+    ("0.1.0", _migrate_0_1_0_to_0_2_0),
+    ("0.2.0", _migrate_0_2_0_to_0_3_0),
+    # ...
+]
+```
+
+#### 3.17.2 `doctor` (config/doctor.py)
+
+```python
+@dataclass
+class HealthCheck:
+    name: str
+    description: str
+    check: Callable[[dict], bool]          # returns True if healthy
+    repair: Callable[[dict], dict] | None  # optional auto-repair function
+
+def doctor(config_path: Path | None = None) -> list[dict]
+```
+
+| Aspect       | Detail |
+|-------------|--------|
+| **Returns**  | List of `{"check": str, "status": "ok" \| "warn" \| "error", "message": str, "repaired": bool}` |
+| **Checks**   | Config file exists, YAML valid, required fields present, API keys non-empty, directory paths exist, version current |
+| **Auto-repair** | Creates missing directories, applies pending migrations, sets defaults for missing optional fields |
+
+---
+
+### 3.18 Group Activation Subsystem
+
+#### 3.18.1 `ActivationMode` Enum (channels/group_activation.py)
+
+| Value     | Description |
+|-----------|-------------|
+| `MENTION` | Bot responds only when @mentioned or replied to (default for groups) |
+| `ALWAYS`  | Bot responds to every message in the group |
+
+#### 3.18.2 Functions (channels/group_activation.py)
+
+```python
+@dataclass
+class ActivationResult:
+    activated: bool
+    reason: str  # "mention", "reply", "always", "inactive"
+
+def check_activation(
+    message: InboundMessage,
+    bot_name: str,
+    session_id: str,
+) -> ActivationResult
+
+def set_session_mode(session_id: str, mode: ActivationMode) -> None
+
+def get_session_mode(session_id: str) -> ActivationMode
+```
+
+**`check_activation` Logic:**
+
+```
+1. mode = get_session_mode(session_id)
+2. IF mode == ALWAYS:
+       RETURN ActivationResult(True, "always")
+3. IF bot_name.lower() in message.content.lower():
+       RETURN ActivationResult(True, "mention")
+4. IF message.metadata.get("reply_to_bot"):
+       RETURN ActivationResult(True, "reply")
+5. RETURN ActivationResult(False, "inactive")
+```
+
+**Session Mode Storage:** In-memory `dict[str, ActivationMode]` with default `MENTION`.
+
+---
+
+### 3.19 DM Pairing Subsystem
+
+#### 3.19.1 `PairingPolicy` Enum (channels/pairing.py)
+
+| Value     | Description |
+|-----------|-------------|
+| `CLOSED`  | No new DM users accepted |
+| `PAIRING` | Users must provide a valid pairing code |
+| `OPEN`    | All DM users accepted automatically |
+
+#### 3.19.2 `PairingManager` (channels/pairing.py)
+
+```
++-------------------------------------------+
+|          PairingManager                   |
++-------------------------------------------+
+| - _policy: PairingPolicy                 |
+| - _approved: set[str]                    |
+| - _pending_codes: dict[str, str]         |
+| - _data_path: Path                       |
+| - _code_ttl: int                         |
++-------------------------------------------+
+| + generate_code(sender_id) -> str         |
+| + approve_by_code(code) -> str | None    |
+| + revoke(sender_id) -> None              |
+| + is_approved(sender_id) -> bool         |
+| + set_policy(policy) -> None             |
+| + save() -> None                         |
+| + load() -> None                         |
++-------------------------------------------+
+```
+
+**Method Contracts:**
+
+| Method            | Parameters                    | Returns         | Notes |
+|-------------------|-------------------------------|-----------------|-------|
+| `generate_code`   | `sender_id: str`              | `str`           | Creates a 6-char alphanumeric code, stores `{code: sender_id}` with TTL. Returns the code. |
+| `approve_by_code` | `code: str`                   | `str \| None`   | Looks up code, removes from pending, adds sender_id to `_approved`. Returns sender_id or `None` if invalid/expired. |
+| `revoke`          | `sender_id: str`              | `None`          | Removes from `_approved`. |
+| `is_approved`     | `sender_id: str`              | `bool`          | `True` if in `_approved` or policy is `OPEN`. |
+| `save`            | *(none)*                      | `None`          | Writes `_approved` set and `_policy` to JSON at `_data_path`. |
+| `load`            | *(none)*                      | `None`          | Reads from `_data_path`. |
+
+---
+
+### 3.20 Daemon Management Subsystem
+
+#### 3.20.1 Types (daemon/manager.py)
+
+```python
+class DaemonStatus(Enum):
+    RUNNING   = "running"
+    STOPPED   = "stopped"
+    NOT_FOUND = "not_found"
+    ERROR     = "error"
+
+@dataclass
+class DaemonInfo:
+    status: DaemonStatus
+    pid: int | None
+    uptime_seconds: float | None
+    platform: str   # "systemd" | "launchd" | "unknown"
+```
+
+#### 3.20.2 Functions (daemon/manager.py)
+
+| Function     | Signature                                    | Returns       | Notes |
+|-------------|----------------------------------------------|---------------|-------|
+| `install`   | `(config_path: Path \| None = None) -> Path` | `Path`        | Writes a systemd unit file (`~/.config/systemd/user/ultrabot.service`) or launchd plist (`~/Library/LaunchAgents/com.ultrabot.plist`). Returns path to the service file. Auto-detects platform. |
+| `uninstall` | `() -> None`                                 | `None`        | Stops the service, removes the unit/plist file. |
+| `start`     | `() -> DaemonInfo`                           | `DaemonInfo`  | Starts the service via `systemctl --user start` or `launchctl load`. |
+| `stop`      | `() -> DaemonInfo`                           | `DaemonInfo`  | Stops the service. |
+| `restart`   | `() -> DaemonInfo`                           | `DaemonInfo`  | Stops then starts. |
+| `status`    | `() -> DaemonInfo`                           | `DaemonInfo`  | Queries service status, returns `DaemonInfo`. |
+
+---
+
+### 3.21 Memory and Context Engine Subsystem
+
+#### 3.21.1 `MemoryEntry` (memory/store.py)
+
+```
++--------------------------------------+
+|   MemoryEntry  (@dataclass)          |
++--------------------------------------+
+| + id: str                            |
+| + content: str                       |
+| + content_hash: str                  |
+| + metadata: dict                     |
+| + created_at: datetime               |
+| + access_count: int                  |
++--------------------------------------+
+```
+
+#### 3.21.2 `MemoryStore` (memory/store.py)
+
+```
++-------------------------------------------+
+|            MemoryStore                    |
++-------------------------------------------+
+| - _db_path: Path                          |
+| - _conn: sqlite3.Connection              |
++-------------------------------------------+
+| + add(content, metadata?) -> str          |
+| + search(query, limit?) -> list[MemEntry] |
+| + delete(entry_id) -> bool               |
+| + get(entry_id) -> MemoryEntry | None    |
+| + count() -> int                         |
+| + clear() -> None                        |
+| + close() -> None                        |
++-------------------------------------------+
+```
+
+**Storage:** SQLite database with FTS5 virtual table for full-text search.
+
+**Schema:**
+
+```sql
+CREATE TABLE IF NOT EXISTS memories (
+    id          TEXT PRIMARY KEY,
+    content     TEXT NOT NULL,
+    content_hash TEXT NOT NULL UNIQUE,
+    metadata    TEXT DEFAULT '{}',
+    created_at  TEXT NOT NULL,
+    access_count INTEGER DEFAULT 0
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    content,
+    content='memories',
+    content_rowid='rowid'
+);
+```
+
+**Method Contracts:**
+
+| Method   | Parameters                                          | Returns               | Notes |
+|----------|-----------------------------------------------------|-----------------------|-------|
+| `add`    | `content: str, metadata: dict \| None = None`      | `str` (entry ID)      | SHA-256 hash deduplication. If content_hash exists, updates access_count instead of inserting. Returns entry ID. |
+| `search` | `query: str, limit: int = 10`                       | `list[MemoryEntry]`   | FTS5 `MATCH` query with BM25 ranking. Increments `access_count` for returned entries. |
+| `delete` | `entry_id: str`                                     | `bool`                | Returns `True` if entry existed and was deleted. |
+| `count`  | *(none)*                                            | `int`                 | `SELECT COUNT(*) FROM memories`. |
+| `clear`  | *(none)*                                            | `None`                | Deletes all rows from `memories` and rebuilds FTS index. |
+| `close`  | *(none)*                                            | `None`                | Commits pending transactions and closes SQLite connection. |
+
+#### 3.21.3 `ContextEngine` (memory/store.py)
+
+```
++-------------------------------------------+
+|           ContextEngine                   |
++-------------------------------------------+
+| - _store: MemoryStore                     |
+| - _max_context_entries: int               |
++-------------------------------------------+
+| + ingest(text, metadata?) -> str          |
+| + retrieve_context(query, limit?) -> str  |
+| + compact() -> int                        |
++-------------------------------------------+
+```
+
+| Method            | Parameters                                        | Returns  | Notes |
+|-------------------|---------------------------------------------------|----------|-------|
+| `ingest`          | `text: str, metadata: dict \| None = None`        | `str`    | Splits text into chunks (paragraph boundaries), stores each via `MemoryStore.add()`. Returns count of entries added. |
+| `retrieve_context`| `query: str, limit: int = 5`                      | `str`    | Searches memory store, formats results as numbered context block for injection into LLM prompt. |
+| `compact`         | *(none)*                                           | `int`    | Removes entries with `access_count == 0` older than 7 days. Returns count removed. |
+
+---
+
+### 3.22 Self-Update Subsystem
+
+#### 3.22.1 Types (updater/update.py)
+
+```python
+class UpdateChannel(Enum):
+    STABLE = "stable"
+    BETA   = "beta"
+    DEV    = "dev"
+
+class InstallKind(Enum):
+    GIT     = "git"       # installed via git clone
+    PIP     = "pip"       # installed via pip / pipx
+    UNKNOWN = "unknown"
+```
+
+#### 3.22.2 Functions (updater/update.py)
+
+| Function             | Signature                                                                     | Returns                              | Notes |
+|---------------------|-------------------------------------------------------------------------------|--------------------------------------|-------|
+| `detect_install_kind` | `() -> InstallKind`                                                         | `InstallKind`                        | Checks for `.git` directory (GIT), `importlib.metadata` (PIP), else UNKNOWN. |
+| `check_update`      | `(channel: UpdateChannel = STABLE) -> dict \| None`                          | `dict \| None`                       | Queries PyPI or GitHub API for latest version. Returns `{"current": str, "latest": str, "update_available": bool, "url": str}` or `None` on error. |
+| `run_update`        | `(channel: UpdateChannel = STABLE, force: bool = False) -> bool`             | `bool`                               | For GIT: `git pull --rebase`. For PIP: `pip install --upgrade ultrabot`. Returns `True` on success. If `force`, skips confirmation. |
+
+---
+
+### 3.23 Auxiliary LLM Client Subsystem
+
+#### 3.23.1 `AuxiliaryClient` (agent/auxiliary.py)
+
+```
++-------------------------------------------+
+|          AuxiliaryClient                  |
++-------------------------------------------+
+| - _provider: str                          |
+| - _model: str                             |
+| - _api_key: str                           |
+| - _base_url: str | None                   |
+| - _http: httpx.AsyncClient               |
++-------------------------------------------+
+| + complete(prompt, max_tokens?) -> str    |
+| + summarize(text, max_length?) -> str     |
+| + generate_title(messages) -> str         |
+| + classify(text, categories) -> str       |
+| + close() -> None                         |
++-------------------------------------------+
+```
+
+**Design Intent:** A lightweight LLM client for non-critical auxiliary tasks
+(summarization, title generation, classification) that uses a cheaper/faster
+model than the primary agent. Does not participate in the tool-calling loop.
+
+**Method Contracts:**
+
+| Method          | Parameters                                                | Returns  | Notes |
+|-----------------|-----------------------------------------------------------|----------|-------|
+| `complete`      | `prompt: str, max_tokens: int = 256`                     | `str`    | Single-shot completion. No tool support. Uses OpenAI-compatible API format. |
+| `summarize`     | `text: str, max_length: int = 200`                       | `str`    | Prompts the model to summarize the input text within `max_length` words. |
+| `generate_title`| `messages: list[dict]`                                   | `str`    | Generates a short (3-8 word) title for a conversation. |
+| `classify`      | `text: str, categories: list[str]`                       | `str`    | Returns the best-matching category from the provided list. |
+| `close`         | *(none)*                                                  | `None`   | Closes the underlying `httpx.AsyncClient`. |
+
+---
+
+### 3.24 Context Compressor Subsystem
+
+#### 3.24.1 `ContextCompressor` (agent/context_compressor.py)
+
+```
++-------------------------------------------+
+|         ContextCompressor                 |
++-------------------------------------------+
+| - _auxiliary: AuxiliaryClient             |
+| - _threshold_ratio: float                 |
+| - _protect_head: int                      |
+| - _protect_tail: int                      |
++-------------------------------------------+
+| + should_compress(messages, max) -> bool  |
+| + compress(messages) -> list[dict]        |
+| + estimate_tokens(messages) -> int        |
+| + prune_tool_output(messages) -> list     |
++-------------------------------------------+
+```
+
+**Constructor Parameters:**
+
+| Parameter         | Type              | Default | Description |
+|-------------------|-------------------|---------|-------------|
+| `auxiliary`       | `AuxiliaryClient` | *required* | The cheap LLM client for summarization |
+| `threshold_ratio` | `float`          | `0.75`  | Compress when token usage exceeds this fraction of context window |
+| `protect_head`    | `int`            | `2`     | Number of messages at the start to never compress (system + first user) |
+| `protect_tail`    | `int`            | `4`     | Number of recent messages to never compress |
+
+**Method Contracts:**
+
+| Method            | Parameters                                  | Returns        | Notes |
+|-------------------|---------------------------------------------|----------------|-------|
+| `should_compress` | `messages: list[dict], max_tokens: int`     | `bool`         | Returns `True` if `estimate_tokens(messages) > max_tokens * threshold_ratio`. |
+| `compress`        | `messages: list[dict]`                      | `list[dict]`   | Protects head and tail messages. Summarizes the middle section via `auxiliary.summarize()`. Returns new message list with a single `{"role": "system", "content": "[Conversation summary: ...]"}` replacing the middle. |
+| `estimate_tokens` | `messages: list[dict]`                      | `int`          | `sum(len(m.get("content", "")) // 4 for m in messages)`. |
+| `prune_tool_output` | `messages: list[dict]`                    | `list[dict]`   | Truncates tool result content longer than 2000 chars to first 1000 + `... [truncated]` + last 500 chars. |
+
+---
+
+### 3.25 Prompt Cache Subsystem
+
+#### 3.25.1 `CacheStats` (providers/prompt_cache.py)
+
+```
++--------------------------------------+
+|   CacheStats  (@dataclass)           |
++--------------------------------------+
+| + hits: int                          |
+| + misses: int                        |
+| + total_tokens_saved: int            |
++--------------------------------------+
+| <<property>> hit_rate -> float       |
++--------------------------------------+
+```
+
+#### 3.25.2 `PromptCacheManager` (providers/prompt_cache.py)
+
+```
++-------------------------------------------+
+|        PromptCacheManager                 |
++-------------------------------------------+
+| - _stats: CacheStats                      |
+| - _min_cache_tokens: int                  |
++-------------------------------------------+
+| + apply_cache_hints(messages, strategy?)  |
+|     -> list[dict]                         |
+| + estimate_savings(messages) -> dict      |
+| + is_anthropic_model(model) -> bool       |
+| + get_stats() -> CacheStats              |
+| + reset_stats() -> None                  |
++-------------------------------------------+
+```
+
+**Cache Strategy (`strategy` parameter):**
+
+| Strategy         | Description |
+|------------------|-------------|
+| `"system_and_3"` | (Default) Marks the system message and the first 3 user/assistant turns with `cache_control: {"type": "ephemeral"}`. This is the Anthropic prompt caching format. |
+| `"system_only"`  | Only marks the system message for caching. |
+| `"aggressive"`   | Marks all messages except the last user message. |
+
+**Method Contracts:**
+
+| Method              | Parameters                                              | Returns       | Notes |
+|---------------------|---------------------------------------------------------|---------------|-------|
+| `apply_cache_hints` | `messages: list[dict], strategy: str = "system_and_3"` | `list[dict]`  | Returns a new message list with `cache_control` annotations added per the strategy. Only applies to Anthropic-format messages. |
+| `estimate_savings`  | `messages: list[dict]`                                  | `dict`        | Returns `{"cacheable_tokens": int, "estimated_savings_pct": float}`. |
+| `is_anthropic_model`| `model: str`                                            | `bool`        | `True` if model name contains `"claude"` or `"anthropic"`. |
+
+---
+
+### 3.26 Subagent Delegation Subsystem
+
+#### 3.26.1 `DelegationRequest` (agent/delegate.py)
+
+```
++--------------------------------------+
+| DelegationRequest  (@dataclass)      |
++--------------------------------------+
+| + task: str                          |
+| + toolset_names: list[str]           |
+| + max_iterations: int = 5            |
+| + timeout_seconds: float = 120.0     |
+| + context: str | None = None         |
++--------------------------------------+
+```
+
+#### 3.26.2 `DelegationResult` (agent/delegate.py)
+
+```
++--------------------------------------+
+| DelegationResult  (@dataclass)       |
++--------------------------------------+
+| + task: str                          |
+| + response: str                      |
+| + success: bool                      |
+| + iterations: int                    |
+| + error: str | None                  |
+| + elapsed_seconds: float             |
++--------------------------------------+
+```
+
+#### 3.26.3 `delegate` Function (agent/delegate.py)
+
+```python
+async def delegate(
+    request: DelegationRequest,
+    agent: Agent,
+    tool_registry: ToolRegistry,
+    toolset_manager: ToolsetManager,
+) -> DelegationResult
+```
+
+| Aspect       | Detail |
+|-------------|--------|
+| **Pre-cond** | `agent` is initialized; toolset names are valid |
+| **Post-cond** | Subagent session is created and cleaned up |
+| **Returns**  | `DelegationResult` with response text and metadata |
+| **Algorithm** | 1. Resolve toolsets to a scoped `ToolRegistry`. 2. Create an ephemeral session. 3. Run `agent.run()` with scoped tools and a system prompt that includes `request.context`. 4. Enforce `timeout_seconds` via `asyncio.wait_for()`. 5. Return result. |
+| **Raises**   | Does not raise. Errors captured in `DelegationResult.error`. |
+
+#### 3.26.4 `DelegateTaskTool` (agent/delegate.py)
+
+Extends `Tool`. Allows the primary agent to delegate subtasks.
+
+```
++--------------------------------------+
+|      DelegateTaskTool (Tool)         |
++--------------------------------------+
+| + name = "delegate_task"             |
+| + description = "Delegate a subtask  |
+|   to a specialized subagent"         |
+| + parameters: {task, toolset, ...}   |
++--------------------------------------+
+| + execute(args) -> str               |
++--------------------------------------+
+```
+
+`execute()` constructs a `DelegationRequest` from `args`, calls `delegate()`,
+returns `DelegationResult.response`.
+
+---
+
+### 3.27 Toolset Composition Subsystem
+
+#### 3.27.1 `Toolset` (tools/toolsets.py)
+
+```
++--------------------------------------+
+|    Toolset  (@dataclass)             |
++--------------------------------------+
+| + name: str                          |
+| + description: str                   |
+| + tool_names: list[str]              |
+| + enabled: bool = True               |
++--------------------------------------+
+```
+
+#### 3.27.2 `ToolsetManager` (tools/toolsets.py)
+
+```
++-------------------------------------------+
+|          ToolsetManager                   |
++-------------------------------------------+
+| - _toolsets: dict[str, Toolset]           |
+| - _registry: ToolRegistry                 |
++-------------------------------------------+
+| + register_toolset(toolset) -> None       |
+| + resolve(names) -> list[Tool]            |
+| + get_definitions(names) -> list[dict]    |
+| + compose(*names) -> ToolRegistry         |
+| + enable(name) -> None                    |
+| + disable(name) -> None                   |
+| + list_toolsets() -> list[Toolset]        |
++-------------------------------------------+
+```
+
+**Built-in Toolsets:**
+
+| Toolset Name | Tools Included |
+|-------------|----------------|
+| `"web"`     | `web_search`, `fetch_url` |
+| `"filesystem"` | `list_files`, `read_file`, `write_file`, `delete_file` |
+| `"code"`    | `exec_shell`, `python_repl` |
+| `"browser"` | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_scroll`, `browser_close` |
+| `"all"`     | All registered tools |
+
+**Method Contracts:**
+
+| Method              | Parameters                       | Returns           | Notes |
+|---------------------|----------------------------------|-------------------|-------|
+| `register_toolset`  | `toolset: Toolset`               | `None`            | Adds toolset to registry. Validates that all `tool_names` exist in `_registry`. |
+| `resolve`           | `names: list[str]`               | `list[Tool]`      | Resolves toolset names to flat deduplicated list of `Tool` instances. |
+| `get_definitions`   | `names: list[str]`               | `list[dict]`      | Returns OpenAI function-calling definitions for tools in the named toolsets. |
+| `compose`           | `*names: str`                    | `ToolRegistry`    | Creates a new `ToolRegistry` containing only the tools from the specified toolsets. |
+| `enable` / `disable`| `name: str`                      | `None`            | Toggles `toolset.enabled`. Disabled toolsets are excluded from `resolve()`. |
+
+---
+
+### 3.28 Injection Detector Subsystem
+
+#### 3.28.1 `InjectionWarning` (security/injection_detector.py)
+
+```
++--------------------------------------+
+| InjectionWarning  (@dataclass)       |
++--------------------------------------+
+| + category: str                      |
+| + description: str                   |
+| + severity: str                      |
+| + span: tuple[int, int]             |
++--------------------------------------+
+```
+
+**Categories:**
+
+| Category             | Severity | Example Pattern |
+|----------------------|----------|-----------------|
+| `"role_hijack"`      | `"high"` | `"Ignore previous instructions"`, `"You are now..."` |
+| `"system_override"`  | `"high"` | `"SYSTEM:"`, `"[INST]"`, `"<\|im_start\|>system"` |
+| `"data_exfiltration"`| `"high"` | `"Send all conversation to..."`, `"Output the system prompt"` |
+| `"encoding_evasion"` | `"medium"` | Base64-encoded instructions, Unicode homoglyphs |
+| `"delimiter_injection"` | `"medium"` | Injected XML/JSON/markdown delimiters meant to confuse parsing |
+
+#### 3.28.2 `InjectionDetector` (security/injection_detector.py)
+
+```
++-------------------------------------------+
+|         InjectionDetector                 |
++-------------------------------------------+
+| - _patterns: list[tuple[str, re.Pattern, str, str]] |
++-------------------------------------------+
+| + scan(text) -> list[InjectionWarning]    |
+| + is_safe(text) -> bool                   |
+| + scan_file(path) -> list[InjectionWarn]  |
+| + sanitize(text) -> str                   |
++-------------------------------------------+
+```
+
+**Method Contracts:**
+
+| Method     | Parameters        | Returns                   | Notes |
+|------------|-------------------|---------------------------|-------|
+| `scan`     | `text: str`       | `list[InjectionWarning]`  | Runs all patterns against text. Returns list of warnings with character spans. |
+| `is_safe`  | `text: str`       | `bool`                    | `len(self.scan(text)) == 0`. Convenience method. |
+| `scan_file`| `path: str`       | `list[InjectionWarning]`  | Reads file, delegates to `scan()`. |
+| `sanitize` | `text: str`       | `str`                     | Removes or escapes detected injection patterns. Preserves non-malicious content. |
+
+---
+
+### 3.29 Credential Redaction Subsystem
+
+#### 3.29.1 `PATTERNS` (security/redact.py)
+
+13 compiled regex patterns covering:
+
+| # | Pattern Name         | Example Match |
+|---|---------------------|---------------|
+| 1 | OpenAI API key      | `sk-proj-...` |
+| 2 | Anthropic API key   | `sk-ant-api03-...` |
+| 3 | AWS Access Key      | `AKIA...` (20 chars) |
+| 4 | AWS Secret Key      | 40-char base64 after `aws_secret` |
+| 5 | Generic Bearer token | `Bearer eyJ...` |
+| 6 | GitHub PAT          | `ghp_...`, `gho_...`, `ghs_...` |
+| 7 | Slack token         | `xoxb-...`, `xoxp-...` |
+| 8 | Discord bot token   | Base64-encoded pattern |
+| 9 | Generic API key     | `api[_-]?key[=:]\s*\S+` |
+| 10 | Private key block   | `-----BEGIN.*PRIVATE KEY-----` |
+| 11 | Database URL        | `postgres://...`, `mysql://...` with password |
+| 12 | JWT token           | `eyJ...\.eyJ...\.` (3-part base64) |
+| 13 | Hex secrets (≥32)   | `secret[=:]\s*[0-9a-f]{32,}` |
+
+#### 3.29.2 Functions and Classes (security/redact.py)
+
+```python
+def redact(text: str) -> str
+```
+
+Replaces all matched secret patterns with `[REDACTED]`. Returns modified text.
+
+```python
+class RedactingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool
+```
+
+Logging filter that calls `redact()` on `record.msg` and all string `record.args`
+before the record is emitted. Always returns `True` (passes the record through).
+
+```python
+def install_redaction(logger: logging.Logger) -> None
+```
+
+Adds a `RedactingFilter` to the given logger and all its handlers.
+
+---
+
+### 3.30 Browser Automation Subsystem
+
+#### 3.30.1 `_BrowserManager` (tools/browser.py)
+
+```
++-------------------------------------------+
+|     _BrowserManager  (singleton)          |
++-------------------------------------------+
+| - _browser: Browser | None                |
+| - _context: BrowserContext | None         |
+| - _page: Page | None                      |
+| - _playwright: Playwright | None          |
++-------------------------------------------+
+| + ensure_browser() -> Page                |
+| + close() -> None                         |
++-------------------------------------------+
+```
+
+**Singleton:** Module-level `_manager: _BrowserManager | None = None`. Lazily
+initialized on first tool invocation. Uses Playwright's `chromium` browser in
+headless mode.
+
+**`ensure_browser()`:** If `_page` is None, launches Playwright, creates a
+browser context (viewport 1280×720, JavaScript enabled), and opens a new page.
+Returns the `Page` object.
+
+#### 3.30.2 Browser Tools (tools/browser.py)
+
+| Tool Class             | Tool Name            | Parameters                                      | Notes |
+|------------------------|----------------------|-------------------------------------------------|-------|
+| `BrowserNavigateTool`  | `browser_navigate`   | `url: str`                                      | Navigates to URL, waits for `load` event. Returns page title + URL. |
+| `BrowserSnapshotTool`  | `browser_snapshot`   | *(none)*                                        | Returns `page.content()` (full HTML) truncated to 32KB + accessibility snapshot via `page.accessibility.snapshot()`. |
+| `BrowserClickTool`     | `browser_click`      | `selector: str`                                 | CSS selector click. Waits 1s for navigation. Returns confirmation or error. |
+| `BrowserTypeTool`      | `browser_type`       | `selector: str, text: str, submit: bool = false`| Types text into input. If `submit`, presses Enter. |
+| `BrowserScrollTool`    | `browser_scroll`     | `direction: str = "down", amount: int = 3`      | Scrolls by `amount` viewport heights. Direction: `"up"` or `"down"`. |
+| `BrowserCloseTool`     | `browser_close`      | *(none)*                                        | Closes browser and cleans up resources. |
+
+```python
+def register_browser_tools(registry: ToolRegistry) -> None
+```
+
+Registers all 6 browser tools in the given `ToolRegistry`.
+
+---
+
+### 3.31 Session Title Generation Subsystem
+
+#### 3.31.1 Functions (agent/title_generator.py)
+
+```python
+async def generate_title(auxiliary: AuxiliaryClient, messages: list[dict]) -> str
+```
+
+| Aspect       | Detail |
+|-------------|--------|
+| **Pre-cond** | `messages` has at least one user message |
+| **Returns**  | A clean 3-8 word title string |
+| **Algorithm** | 1. Extract first 2 user messages and first assistant reply. 2. Call `auxiliary.generate_title(messages)`. 3. Pass through `_clean_title()`. 4. On any error, fall back to `_fallback_title()`. |
+
+```python
+def _clean_title(raw: str) -> str
+```
+
+Strips quotes, trailing punctuation, "Title:" prefixes, and truncates to 60
+characters. Collapses whitespace.
+
+```python
+def _fallback_title(messages: list[dict]) -> str
+```
+
+Takes the first user message, truncates to 40 characters at a word boundary,
+appends `"..."` if truncated.
+
+---
+
+### 3.32 CLI Theme Engine Subsystem
+
+#### 3.32.1 Theme Dataclasses (cli/themes.py)
+
+```
++-------------------------------+    +-------------------------------+
+|    ThemeColors (@dataclass)   |    |   ThemeSpinner (@dataclass)   |
++-------------------------------+    +-------------------------------+
+| + primary: str                |    | + frames: list[str]           |
+| + secondary: str              |    | + interval: float = 0.1       |
+| + accent: str                 |    +-------------------------------+
+| + success: str                |
+| + warning: str                |    +-------------------------------+
+| + error: str                  |    |   ThemeBranding (@dataclass)  |
+| + muted: str                  |    +-------------------------------+
++-------------------------------+    | + app_name: str = "ultrabot"  |
+                                     | + banner: str | None           |
++-------------------------------+    | + icon: str = "🤖"            |
+|     Theme (@dataclass)        |    +-------------------------------+
++-------------------------------+
+| + name: str                   |
+| + description: str            |
+| + colors: ThemeColors         |
+| + spinner: ThemeSpinner       |
+| + branding: ThemeBranding     |
++-------------------------------+
+```
+
+#### 3.32.2 `ThemeManager` (cli/themes.py)
+
+```
++-------------------------------------------+
+|           ThemeManager                    |
++-------------------------------------------+
+| - _themes: dict[str, Theme]               |
+| - _active: str                            |
+| - _user_themes_dir: Path                  |
++-------------------------------------------+
+| + get(name?) -> Theme                     |
+| + list_themes() -> list[str]              |
+| + set_active(name) -> None                |
+| + save_theme(theme) -> None               |
+| + load_user_themes() -> int               |
++-------------------------------------------+
+```
+
+**Built-in Themes:**
+
+| Theme Name  | Description |
+|-------------|-------------|
+| `"default"` | Standard terminal colors (blue/cyan primary) |
+| `"dark"`    | High-contrast dark theme (green/white) |
+| `"light"`   | Light background optimized (dark text) |
+| `"minimal"` | No colors, ASCII-only spinner |
+
+**Method Contracts:**
+
+| Method             | Parameters                  | Returns       | Notes |
+|--------------------|-----------------------------|---------------|-------|
+| `get`              | `name: str \| None = None`  | `Theme`       | Returns named theme or active theme. Raises `KeyError` if not found. |
+| `list_themes`      | *(none)*                    | `list[str]`   | Returns sorted list of all theme names (built-in + user). |
+| `set_active`       | `name: str`                 | `None`        | Sets `_active`. Persists choice to config. |
+| `save_theme`       | `theme: Theme`              | `None`        | Writes theme to `_user_themes_dir / {name}.yaml`. |
+| `load_user_themes` | *(none)*                    | `int`         | Loads all YAML files from `_user_themes_dir`. Returns count loaded. |
+
+#### 3.32.3 YAML Theme Format
+
+```yaml
+name: "ocean"
+description: "Ocean-inspired blue theme"
+colors:
+  primary: "#0077be"
+  secondary: "#00a6ed"
+  accent: "#48d1cc"
+  success: "#2ecc71"
+  warning: "#f39c12"
+  error: "#e74c3c"
+  muted: "#6c757d"
+spinner:
+  frames: ["🌊", "🌀", "💧", "🌊"]
+  interval: 0.15
+branding:
+  app_name: "ultrabot"
+  banner: null
+  icon: "🌊"
+```
+
+```python
+def load_theme_yaml(path: Path) -> Theme
+def save_theme_yaml(theme: Theme, path: Path) -> None
+```
+
+---
+
 ## 4. Data Structures and Models
 
 ### 4.1 Core Dataclasses Summary
@@ -1980,6 +3077,9 @@ Gateway         ExpertRouter        Agent
 | `ddgs`               | >=5.0     | DuckDuckGo search tool            |
 | `pyyaml`             | >=6.0     | YAML config parsing               |
 | `mcp`                | >=0.1     | MCP protocol client               |
+| `pillow`             | >=10.0    | Image processing (adaptive resize)|
+| `pypdf`              | >=3.0     | PDF text extraction               |
+| `playwright`         | >=1.40    | Browser automation                |
 
 ### 12.2 Token Estimation Accuracy
 
@@ -2006,6 +3106,9 @@ should consider `tiktoken` for accurate counting.
 | Arbitrary code execution   | Subprocess timeout, workspace restriction          |
 | API key leakage            | Environment variables, never logged                |
 | LLM provider outage        | Multi-provider failover, circuit breakers          |
+| Prompt injection (advanced)| InjectionDetector with 5-category pattern scanning |
+| Credential leakage in logs | RedactingFilter with 13 secret patterns            |
+| SSRF via media fetch       | Private IP blocking in `media/fetch.py`            |
 
 ### 12.4 Performance Characteristics
 
@@ -2022,6 +3125,26 @@ should consider `tiktoken` for accurate counting.
 | Tool: exec_shell         | 10-30000 ms            | Subprocess         |
 | Session save             | 1-10 ms                | Disk I/O           |
 | Session load             | 1-10 ms                | Disk I/O           |
+| Memory FTS5 search       | 1-50 ms                | SQLite FTS5        |
+| Media fetch (SSRF check) | 1-5 ms + fetch time    | DNS + HTTP         |
+| Browser navigation       | 500-10000 ms           | Playwright + page  |
+| Context compression      | 500-3000 ms            | Auxiliary LLM call |
+
+### 12.5 Project Metrics Summary
+
+| Metric                       | Value     |
+|------------------------------|-----------|
+| Python source files          | 77        |
+| Source LOC (excl. tests)     | ~17,284   |
+| Test files                   | 33        |
+| Test LOC                     | ~8,568    |
+| Passing tests                | 732       |
+| Built-in tools               | 15        |
+| Expert personas (bundled)    | 170       |
+| Supported LLM providers      | 12        |
+| Supported channel adapters   | 7         |
+| CLI themes (built-in)        | 4         |
+| Config migration versions    | 2+        |
 
 ---
 
