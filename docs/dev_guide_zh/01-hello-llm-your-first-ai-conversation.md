@@ -1,10 +1,11 @@
 # 课程 1：向 LLM 问好 -- 你的第一次 AI 对话
 
-**目标：** 用 10 行 Python 和 LLM 对话，然后逐步构建一个多轮聊天机器人。
+**目标：** 用 10 行 Python 和 LLM 对话，然后逐步构建一个支持任意 OpenAI 兼容提供者的多轮聊天机器人。
 
 **你将学到：**
 - OpenAI chat completions API 的工作原理
 - 消息列表模式（system / user / assistant 角色）
+- 如何将客户端指向**任意** OpenAI 兼容提供者（DeepSeek、Ollama、vLLM、LiteLLM 等）
 - 如何构建多轮对话循环
 
 **新建文件：**
@@ -16,7 +17,8 @@
 pip install openai
 ```
 
-就这样。一个包。不需要项目脚手架，不需要配置文件。
+就这样。一个包。不需要项目脚手架，不需要配置文件。`openai` Python SDK
+可以与任何暴露 OpenAI 兼容 API 的提供者一起使用 -- 不仅仅是 OpenAI 本身。
 
 ### 步骤 2：向 LLM 打个招呼
 
@@ -24,11 +26,29 @@ pip install openai
 
 ```python
 # chat.py -- 你的第一次 AI 对话
+import os
 from openai import OpenAI
 
-client = OpenAI()  # 从环境变量读取 OPENAI_API_KEY
+# 三个环境变量控制你与哪个 LLM 对话：
+#   OPENAI_API_KEY  -- 你的 API 密钥（必需）
+#   OPENAI_BASE_URL -- 提供者的基础 URL（可选，默认为 OpenAI）
+#   MODEL           -- 模型名称（可选，默认为 gpt-4o-mini）
+#
+# 这意味着同一份代码可以用于：
+#   - OpenAI          （默认）
+#   - DeepSeek        （OPENAI_BASE_URL=https://api.deepseek.com）
+#   - Ollama          （OPENAI_BASE_URL=http://localhost:11434/v1）
+#   - vLLM            （OPENAI_BASE_URL=http://localhost:8000/v1）
+#   - 任何兼容的提供者
+
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
+    base_url=os.getenv("OPENAI_BASE_URL"),  # None = 默认 OpenAI 端点
+)
+model = os.getenv("MODEL", "gpt-4o-mini")
+
 response = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model=model,
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
@@ -37,11 +57,26 @@ print(response.choices[0].message.content)
 运行：
 
 ```bash
+# 选项 A：OpenAI（默认）
 export OPENAI_API_KEY="sk-..."
+python chat.py
+
+# 选项 B：DeepSeek
+export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="https://api.deepseek.com"
+export MODEL="deepseek-chat"
+python chat.py
+
+# 选项 C：本地 Ollama
+export OPENAI_API_KEY="ollama"
+export OPENAI_BASE_URL="http://localhost:11434/v1"
+export MODEL="llama3.2"
 python chat.py
 ```
 
-你应该能看到模型返回的友好问候。这就是整个 OpenAI chat API 的六行代码：你发送一个消息列表，得到一个回复。
+你应该能看到模型返回的友好问候。这就是整个 OpenAI 兼容 chat API：你发送一个
+消息列表，得到一个回复。无论你调用的是 OpenAI、DeepSeek 还是本地模型，
+同一份代码都能工作。
 
 ### 步骤 3：理解消息格式
 
@@ -59,9 +94,14 @@ python chat.py
 
 ```python
 # chat.py -- 现在有了个性
+import os
 from openai import OpenAI
 
-client = OpenAI()
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
+    base_url=os.getenv("OPENAI_BASE_URL"),
+)
+model = os.getenv("MODEL", "gpt-4o-mini")
 
 # 系统提示词设定 AI 的行为 -- 就像 ultrabot 的
 # ultrabot/agent/prompts.py 中的 DEFAULT_SYSTEM_PROMPT
@@ -71,7 +111,7 @@ SYSTEM_PROMPT = """You are UltraBot, a helpful personal AI assistant.
 - Use code blocks for any code in your responses."""
 
 response = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model=model,
     messages=[
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "What is Python's GIL?"},
@@ -85,10 +125,15 @@ print(response.choices[0].message.content)
 关键洞察：要进行对话，你需要维护一个不断增长的 `messages` 列表。每次助手回复后，将其追加到列表，然后追加下一条用户消息。
 
 ```python
-# chat.py -- 完整的多轮聊天机器人
+# chat.py -- 完整的多轮聊天机器人（适用于任何 OpenAI 兼容提供者）
+import os
 from openai import OpenAI
 
-client = OpenAI()
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
+    base_url=os.getenv("OPENAI_BASE_URL"),
+)
+model = os.getenv("MODEL", "gpt-4o-mini")
 
 SYSTEM_PROMPT = """You are UltraBot, a helpful personal AI assistant.
 - Answer concisely and accurately.
@@ -98,7 +143,7 @@ SYSTEM_PROMPT = """You are UltraBot, a helpful personal AI assistant.
 # 对话历史 -- 这是核心数据结构
 messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-print("UltraBot ready. Type 'exit' to quit.\n")
+print(f"UltraBot ready (model={model}). Type 'exit' to quit.\n")
 
 while True:
     user_input = input("you > ").strip()
@@ -113,7 +158,7 @@ while True:
 
     # 2. 将完整历史记录发送给 LLM
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=model,
         messages=messages,
     )
 
@@ -152,7 +197,8 @@ build-backend = "hatchling.build"
 
 ```python
 # tests/test_session1.py
-"""课程 1 的测试 -- 消息格式和响应解析。"""
+"""课程 1 的测试 -- 消息格式、环境变量配置和响应解析。"""
+import os
 import pytest
 
 
@@ -189,6 +235,42 @@ def test_multi_turn_history():
         assert messages[i]["role"] == expected
 
 
+def test_default_model():
+    """未设置 MODEL 环境变量时，默认为 gpt-4o-mini。"""
+    orig = os.environ.pop("MODEL", None)
+    try:
+        model = os.getenv("MODEL", "gpt-4o-mini")
+        assert model == "gpt-4o-mini"
+    finally:
+        if orig is not None:
+            os.environ["MODEL"] = orig
+
+
+def test_custom_model(monkeypatch):
+    """MODEL 环境变量可覆盖默认模型。"""
+    monkeypatch.setenv("MODEL", "deepseek-chat")
+    model = os.getenv("MODEL", "gpt-4o-mini")
+    assert model == "deepseek-chat"
+
+
+def test_custom_base_url(monkeypatch):
+    """OPENAI_BASE_URL 环境变量用于配置提供者端点。"""
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    assert base_url == "https://api.deepseek.com"
+
+
+def test_base_url_none_when_unset():
+    """OPENAI_BASE_URL 未设置时默认为 None（使用 OpenAI 端点）。"""
+    orig = os.environ.pop("OPENAI_BASE_URL", None)
+    try:
+        base_url = os.getenv("OPENAI_BASE_URL")
+        assert base_url is None
+    finally:
+        if orig is not None:
+            os.environ["OPENAI_BASE_URL"] = orig
+
+
 def test_response_parsing_mock(monkeypatch):
     """测试我们能否正确解析 OpenAI 响应（使用 mock）。"""
     from unittest.mock import MagicMock
@@ -218,12 +300,13 @@ pytest tests/test_session1.py -v
 ### 检查点
 
 ```bash
+# 使用任意提供者 -- 设置环境变量后运行：
 python chat.py
 ```
 
 预期输出：
 ```
-UltraBot ready. Type 'exit' to quit.
+UltraBot ready (model=gpt-4o-mini). Type 'exit' to quit.
 
 you > What is 2 + 2?
 
@@ -238,9 +321,14 @@ Goodbye!
 ```
 
 模型记住了之前的对话轮次，因为我们每次都发送了完整的 `messages` 列表。
+由于我们从环境变量读取 `OPENAI_BASE_URL` 和 `MODEL`，同一份代码可以
+用于 OpenAI、DeepSeek、Ollama 或任何兼容提供者。
 
 ### 本课成果
 
-一个完整的单文件多轮聊天机器人。消息列表模式（`system` + 交替的 `user`/`assistant`）是 UltraBot 中一切功能的基础。
+一个完整的单文件多轮聊天机器人，支持**任意** OpenAI 兼容提供者。三个环境变量
+（`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`MODEL`）让你无需修改代码即可切换
+提供者。消息列表模式（`system` + 交替的 `user`/`assistant`）是 UltraBot 中
+一切功能的基础。
 
 ---

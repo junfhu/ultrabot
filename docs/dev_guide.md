@@ -125,11 +125,12 @@ Turn the page.
 
 ## Session 1: Hello LLM -- Your First AI Conversation
 
-**Goal:** Talk to an LLM in 10 lines of Python, then build up to a multi-turn chatbot.
+**Goal:** Talk to an LLM in 10 lines of Python, then build up to a multi-turn chatbot that works with any OpenAI-compatible provider.
 
 **What you'll learn:**
 - How the OpenAI chat completions API works
 - The messages list pattern (system / user / assistant roles)
+- How to point the client at **any** OpenAI-compatible provider (DeepSeek, Ollama, vLLM, LiteLLM, etc.)
 - How to build a multi-turn conversation loop
 
 **New files:**
@@ -141,7 +142,9 @@ Turn the page.
 pip install openai
 ```
 
-That's it. One package. No project scaffolding, no config files.
+That's it. One package. No project scaffolding, no config files. The `openai`
+Python SDK works with any provider that exposes an OpenAI-compatible API --
+not just OpenAI itself.
 
 ### Step 2: Say hello to the LLM
 
@@ -149,11 +152,29 @@ Create `chat.py`:
 
 ```python
 # chat.py -- Your first AI conversation
+import os
 from openai import OpenAI
 
-client = OpenAI()  # reads OPENAI_API_KEY from environment
+# Three environment variables control which LLM you talk to:
+#   OPENAI_API_KEY  -- your API key (required)
+#   OPENAI_BASE_URL -- base URL of the provider (optional, defaults to OpenAI)
+#   MODEL           -- model name (optional, defaults to gpt-4o-mini)
+#
+# This means the SAME code works with:
+#   - OpenAI          (default)
+#   - DeepSeek        (OPENAI_BASE_URL=https://api.deepseek.com)
+#   - Ollama          (OPENAI_BASE_URL=http://localhost:11434/v1)
+#   - vLLM            (OPENAI_BASE_URL=http://localhost:8000/v1)
+#   - Any compatible   provider
+
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
+    base_url=os.getenv("OPENAI_BASE_URL"),  # None = default OpenAI endpoint
+)
+model = os.getenv("MODEL", "gpt-4o-mini")
+
 response = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model=model,
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(response.choices[0].message.content)
@@ -162,12 +183,26 @@ print(response.choices[0].message.content)
 Run it:
 
 ```bash
+# Option A: OpenAI (default)
 export OPENAI_API_KEY="sk-..."
+python chat.py
+
+# Option B: DeepSeek
+export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="https://api.deepseek.com"
+export MODEL="deepseek-chat"
+python chat.py
+
+# Option C: Local Ollama
+export OPENAI_API_KEY="ollama"
+export OPENAI_BASE_URL="http://localhost:11434/v1"
+export MODEL="llama3.2"
 python chat.py
 ```
 
-You should see a friendly greeting from the model. That's the entire OpenAI
-chat API in six lines: you send a list of messages, you get a response back.
+You should see a friendly greeting from the model. That's the entire OpenAI-
+compatible chat API: you send a list of messages, you get a response back.
+The same code works whether you're calling OpenAI, DeepSeek, or a local model.
 
 ### Step 3: Understand the message format
 
@@ -188,9 +223,14 @@ this list.
 
 ```python
 # chat.py -- now with personality
+import os
 from openai import OpenAI
 
-client = OpenAI()
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
+    base_url=os.getenv("OPENAI_BASE_URL"),
+)
+model = os.getenv("MODEL", "gpt-4o-mini")
 
 # The system prompt sets the AI's behavior -- just like ultrabot's
 # DEFAULT_SYSTEM_PROMPT in ultrabot/agent/prompts.py
@@ -200,7 +240,7 @@ SYSTEM_PROMPT = """You are UltraBot, a helpful personal AI assistant.
 - Use code blocks for any code in your responses."""
 
 response = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model=model,
     messages=[
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "What is Python's GIL?"},
@@ -215,10 +255,15 @@ The key insight: to have a conversation, you keep a growing `messages` list.
 After each assistant reply, you append it, then append the next user message.
 
 ```python
-# chat.py -- full multi-turn chatbot
+# chat.py -- full multi-turn chatbot (works with any OpenAI-compatible provider)
+import os
 from openai import OpenAI
 
-client = OpenAI()
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "sk-placeholder"),
+    base_url=os.getenv("OPENAI_BASE_URL"),
+)
+model = os.getenv("MODEL", "gpt-4o-mini")
 
 SYSTEM_PROMPT = """You are UltraBot, a helpful personal AI assistant.
 - Answer concisely and accurately.
@@ -228,7 +273,7 @@ SYSTEM_PROMPT = """You are UltraBot, a helpful personal AI assistant.
 # The conversation history -- this is the core data structure
 messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-print("UltraBot ready. Type 'exit' to quit.\n")
+print(f"UltraBot ready (model={model}). Type 'exit' to quit.\n")
 
 while True:
     user_input = input("you > ").strip()
@@ -243,7 +288,7 @@ while True:
 
     # 2. Send the full history to the LLM
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=model,
         messages=messages,
     )
 
@@ -286,7 +331,8 @@ Create `tests/test_session1.py`:
 
 ```python
 # tests/test_session1.py
-"""Tests for Session 1 -- message format and response parsing."""
+"""Tests for Session 1 -- message format, env config, and response parsing."""
+import os
 import pytest
 
 
@@ -323,6 +369,42 @@ def test_multi_turn_history():
         assert messages[i]["role"] == expected
 
 
+def test_default_model():
+    """MODEL env var defaults to gpt-4o-mini when unset."""
+    orig = os.environ.pop("MODEL", None)
+    try:
+        model = os.getenv("MODEL", "gpt-4o-mini")
+        assert model == "gpt-4o-mini"
+    finally:
+        if orig is not None:
+            os.environ["MODEL"] = orig
+
+
+def test_custom_model(monkeypatch):
+    """MODEL env var overrides the default model."""
+    monkeypatch.setenv("MODEL", "deepseek-chat")
+    model = os.getenv("MODEL", "gpt-4o-mini")
+    assert model == "deepseek-chat"
+
+
+def test_custom_base_url(monkeypatch):
+    """OPENAI_BASE_URL env var configures the provider endpoint."""
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    assert base_url == "https://api.deepseek.com"
+
+
+def test_base_url_none_when_unset():
+    """OPENAI_BASE_URL defaults to None (uses OpenAI endpoint)."""
+    orig = os.environ.pop("OPENAI_BASE_URL", None)
+    try:
+        base_url = os.getenv("OPENAI_BASE_URL")
+        assert base_url is None
+    finally:
+        if orig is not None:
+            os.environ["OPENAI_BASE_URL"] = orig
+
+
 def test_response_parsing_mock(monkeypatch):
     """Test that we correctly parse an OpenAI response (mocked)."""
     from unittest.mock import MagicMock
@@ -352,12 +434,13 @@ pytest tests/test_session1.py -v
 ### Checkpoint
 
 ```bash
+# With any provider -- set your env vars and run:
 python chat.py
 ```
 
 Expected:
 ```
-UltraBot ready. Type 'exit' to quit.
+UltraBot ready (model=gpt-4o-mini). Type 'exit' to quit.
 
 you > What is 2 + 2?
 
@@ -372,13 +455,17 @@ Goodbye!
 ```
 
 The model remembers previous turns because we're sending the full `messages`
-list each time.
+list each time. And because we read `OPENAI_BASE_URL` and `MODEL` from the
+environment, the same code works with OpenAI, DeepSeek, Ollama, or any
+compatible provider.
 
 ### What we built
 
-A complete multi-turn chatbot in a single file. The messages list pattern
-(`system` + alternating `user`/`assistant`) is the foundation that everything
-else in UltraBot builds upon.
+A complete multi-turn chatbot in a single file that works with **any**
+OpenAI-compatible provider. Three env vars (`OPENAI_API_KEY`,
+`OPENAI_BASE_URL`, `MODEL`) let you switch providers without changing code.
+The messages list pattern (`system` + alternating `user`/`assistant`) is the
+foundation that everything else in UltraBot builds upon.
 
 ---
 
