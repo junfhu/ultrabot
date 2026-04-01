@@ -195,6 +195,10 @@ def agent(
         Optional[str],
         typer.Option("--model", help="Override the LLM model name."),
     ] = None,
+    resume: Annotated[
+        Optional[str],
+        typer.Option("--resume", "-r", help="Resume an existing session by ID."),
+    ] = None,
 ) -> None:
     """Start an interactive chat session or send a one-shot message."""
     ws = _resolve_workspace(workspace)
@@ -206,7 +210,7 @@ def agent(
         )
         raise typer.Exit(1)
 
-    asyncio.run(_agent_async(cfg_path, ws, message, model))
+    asyncio.run(_agent_async(cfg_path, ws, message, model, resume=resume))
 
 
 async def _agent_async(
@@ -214,6 +218,7 @@ async def _agent_async(
     workspace: Path,
     message: str | None,
     model: str | None,
+    resume: str | None = None,
 ) -> None:
     """Async entry point for the agent command."""
     from ultrabot.config.loader import load_config
@@ -221,6 +226,7 @@ async def _agent_async(
     from ultrabot.session.manager import SessionManager
     from ultrabot.tools.base import ToolRegistry
     from ultrabot.agent.agent import Agent
+    from ultrabot.usage.tracker import UsageTracker
 
     cfg = load_config(cfg_path)
 
@@ -230,6 +236,7 @@ async def _agent_async(
     provider_mgr = ProviderManager(cfg)
     session_mgr = SessionManager(workspace)
     tool_registry = ToolRegistry()
+    usage_tracker = UsageTracker(data_dir=workspace / "usage")
     agent_inst = Agent(
         config=cfg.agents.defaults,
         provider_manager=provider_mgr,
@@ -237,7 +244,12 @@ async def _agent_async(
         tool_registry=tool_registry,
     )
 
-    session_key = "cli:interactive"
+    # Determine session key: resume an existing session or create a new one
+    if resume:
+        session_key = resume
+        console.print(f"[dim]Resuming session: {session_key}[/dim]")
+    else:
+        session_key = "cli:interactive"
 
     if message:
         # One-shot mode.
@@ -247,7 +259,7 @@ async def _agent_async(
 
     # Interactive mode.
     _interactive_banner()
-    await _interactive_loop(agent_inst, session_key)
+    await _interactive_loop(agent_inst, session_key, session_mgr, usage_tracker, tool_registry)
 
 
 def _interactive_banner() -> None:
@@ -261,8 +273,14 @@ def _interactive_banner() -> None:
     )
 
 
-async def _interactive_loop(agent_inst: object, session_key: str) -> None:
-    """Run the interactive REPL using prompt_toolkit."""
+async def _interactive_loop(
+    agent_inst: object,
+    session_key: str,
+    session_mgr: object | None = None,
+    usage_tracker: object | None = None,
+    tool_registry: object | None = None,
+) -> None:
+    """Run the interactive REPL using prompt_toolkit with slash commands."""
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
 
@@ -285,12 +303,304 @@ async def _interactive_loop(agent_inst: object, session_key: str) -> None:
             console.print("[dim]Goodbye.[/dim]")
             break
 
+        # --- Slash command handling ---
+        if text.startswith("/"):
+            handled = await _handle_slash_command(
+                text,
+                agent_inst=agent_inst,
+                session_key=session_key,
+                session_mgr=session_mgr,
+                usage_tracker=usage_tracker,
+                tool_registry=tool_registry,
+            )
+            if handled:
+                continue
+
         try:
             response = await agent_inst.run(text, session_key=session_key)  # type: ignore[attr-defined]
             console.print(Markdown(response))
+
+            # Show per-turn cost if tracker is available
+            if usage_tracker is not None:
+                _show_turn_cost(usage_tracker)
         except Exception as exc:
             logger.exception("Agent error")
             console.print(f"[red]Error: {exc}[/red]")
+
+
+def _show_turn_cost(tracker: object) -> None:
+    """Show a brief per-turn cost line after each response."""
+    try:
+        summary = tracker.get_summary()  # type: ignore[attr-defined]
+        total_cost = summary.get("total_cost_usd", 0)
+        total_tokens = summary.get("total_tokens", 0)
+        calls = summary.get("total_calls", 0)
+        if total_cost > 0:
+            console.print(
+                f"[dim]  cost: ${total_cost:.4f} | tokens: {total_tokens:,} | calls: {calls}[/dim]"
+            )
+    except Exception:
+        pass
+
+
+async def _handle_slash_command(
+    text: str,
+    agent_inst: object,
+    session_key: str,
+    session_mgr: object | None,
+    usage_tracker: object | None,
+    tool_registry: object | None,
+) -> bool:
+    """Handle a slash command. Returns True if the command was handled."""
+    parts = text.split(maxsplit=1)
+    cmd = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if cmd == "/help":
+        console.print(Panel(
+            "[bold]Slash Commands:[/bold]\n\n"
+            "  /clear             Clear the current session\n"
+            "  /compact           Trigger context compaction now\n"
+            "  /cost              Show usage and cost summary\n"
+            "  /model [name]      Show or change the current model\n"
+            "  /tools             List available tools\n"
+            "  /memory [query]    Search long-term memory\n"
+            "  /session [list|save|info]  Session management\n"
+            "  /export [path]     Export session to a file\n"
+            "  /git [status|diff|log|commit]  Git integration\n"
+            "  /help              Show this help message\n"
+            "  /quit              Exit the REPL",
+            title="Help",
+            border_style="blue",
+        ))
+        return True
+
+    if cmd == "/clear":
+        if session_mgr is not None:
+            try:
+                sess = await session_mgr.get_or_create(session_key)  # type: ignore[attr-defined]
+                sess.clear()
+                console.print("[green]Session cleared.[/green]")
+            except Exception as exc:
+                console.print(f"[red]Failed to clear session: {exc}[/red]")
+        else:
+            console.print("[yellow]Session manager not available.[/yellow]")
+        return True
+
+    if cmd == "/compact":
+        console.print("[dim]Triggering context compaction...[/dim]")
+        try:
+            from ultrabot.agent.context_compressor import ContextCompressor
+            from ultrabot.agent.auxiliary import AuxiliaryClient
+
+            if session_mgr is not None:
+                sess = await session_mgr.get_or_create(session_key)  # type: ignore[attr-defined]
+                before = len(sess.messages)
+                # Use microcompact (no LLM call, zero cost)
+                sess.messages = ContextCompressor.microcompact(sess.messages)
+                after = len(sess.messages)
+                console.print(
+                    f"[green]Compacted: {before} messages (tool outputs cleared for old entries).[/green]"
+                )
+        except Exception as exc:
+            console.print(f"[red]Compaction failed: {exc}[/red]")
+        return True
+
+    if cmd == "/cost":
+        if usage_tracker is not None:
+            try:
+                summary = usage_tracker.get_summary()  # type: ignore[attr-defined]
+                lines = [
+                    f"Total cost:    ${summary.get('total_cost_usd', 0):.4f}",
+                    f"Total tokens:  {summary.get('total_tokens', 0):,}",
+                    f"Total calls:   {summary.get('total_calls', 0)}",
+                ]
+                # Cache hit rate
+                by_model = summary.get("by_model", {})
+                daily = summary.get("daily", {})
+                if daily:
+                    lines.append("\n[bold]Daily:[/bold]")
+                    for day, stats in sorted(daily.items()):
+                        lines.append(f"  {day}: ${stats.get('cost', 0):.4f} ({int(stats.get('calls', 0))} calls)")
+                console.print(Panel("\n".join(lines), title="Usage & Cost", border_style="green"))
+            except Exception as exc:
+                console.print(f"[red]Failed to get cost: {exc}[/red]")
+        else:
+            console.print("[yellow]Usage tracker not available.[/yellow]")
+        return True
+
+    if cmd == "/model":
+        if arg:
+            try:
+                agent_inst._config.model = arg  # type: ignore[attr-defined]
+                console.print(f"[green]Model changed to: {arg}[/green]")
+            except Exception as exc:
+                console.print(f"[red]Failed to change model: {exc}[/red]")
+        else:
+            current = getattr(getattr(agent_inst, "_config", None), "model", "unknown")
+            console.print(f"Current model: [cyan]{current}[/cyan]")
+        return True
+
+    if cmd == "/tools":
+        if tool_registry is not None:
+            try:
+                tools = tool_registry.list_tools()  # type: ignore[attr-defined]
+                if tools:
+                    lines = [f"  [cyan]{t.name}[/cyan] -- {t.description[:60]}" for t in tools]
+                    console.print(Panel("\n".join(lines), title=f"Tools ({len(tools)})", border_style="blue"))
+                else:
+                    console.print("[yellow]No tools registered.[/yellow]")
+            except Exception as exc:
+                console.print(f"[red]Error: {exc}[/red]")
+        else:
+            console.print("[yellow]Tool registry not available.[/yellow]")
+        return True
+
+    if cmd == "/memory":
+        try:
+            from ultrabot.memory.store import MemoryStore
+            db_path = _DEFAULT_WORKSPACE / "memory.db"
+            if db_path.exists():
+                store = MemoryStore(db_path)
+                query = arg or "recent"
+                results = store.search(query, limit=5)
+                if results.entries:
+                    for entry in results.entries:
+                        console.print(f"  [dim]{entry.source}[/dim] (score={entry.score:.2f})")
+                        console.print(f"    {entry.content[:120]}")
+                else:
+                    console.print("[yellow]No matching memories found.[/yellow]")
+                store.close()
+            else:
+                console.print("[yellow]No memory store found.[/yellow]")
+        except Exception as exc:
+            console.print(f"[red]Memory search failed: {exc}[/red]")
+        return True
+
+    if cmd == "/session":
+        if session_mgr is not None:
+            try:
+                if arg == "list":
+                    sessions = await session_mgr.list_sessions()  # type: ignore[attr-defined]
+                    if sessions:
+                        for sk in sessions:
+                            marker = " [bold]*[/bold]" if sk == session_key else ""
+                            console.print(f"  {sk}{marker}")
+                    else:
+                        console.print("[yellow]No sessions found.[/yellow]")
+                elif arg == "save":
+                    await session_mgr.save(session_key)  # type: ignore[attr-defined]
+                    console.print(f"[green]Session saved: {session_key}[/green]")
+                else:
+                    # Default: show info about the current session
+                    sess = await session_mgr.get_or_create(session_key)  # type: ignore[attr-defined]
+                    console.print(Panel(
+                        f"Session ID:  {sess.session_id}\n"
+                        f"Messages:    {len(sess.messages)}\n"
+                        f"Tokens:      ~{sess.token_count:,}\n"
+                        f"Created:     {sess.created_at.isoformat()}\n"
+                        f"Last active: {sess.last_active.isoformat()}",
+                        title="Session Info",
+                    ))
+            except Exception as exc:
+                console.print(f"[red]Session error: {exc}[/red]")
+        else:
+            console.print("[yellow]Session manager not available.[/yellow]")
+        return True
+
+    if cmd == "/export":
+        if session_mgr is not None:
+            try:
+                import json as _json
+                sess = await session_mgr.get_or_create(session_key)  # type: ignore[attr-defined]
+                export_path = Path(arg) if arg else _DEFAULT_WORKSPACE / f"export_{session_key.replace(':', '_')}.json"
+                export_path.write_text(
+                    _json.dumps(sess.to_dict(), indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                console.print(f"[green]Session exported to {export_path}[/green]")
+            except Exception as exc:
+                console.print(f"[red]Export failed: {exc}[/red]")
+        else:
+            console.print("[yellow]Session manager not available.[/yellow]")
+        return True
+
+    if cmd == "/git":
+        await _handle_git_command(arg)
+        return True
+
+    # Unknown slash command — return False so it's sent to the LLM
+    return False
+
+
+async def _handle_git_command(arg: str) -> None:
+    """Handle /git sub-commands: status, diff, commit, log."""
+    import subprocess
+
+    sub = arg.split(maxsplit=1)
+    sub_cmd = sub[0].lower() if sub else "status"
+    sub_arg = sub[1].strip() if len(sub) > 1 else ""
+
+    if sub_cmd == "status":
+        result = subprocess.run(
+            ["git", "status", "--short"], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip() or "(working tree clean)"
+            console.print(Panel(output, title="git status", border_style="yellow"))
+        else:
+            console.print(f"[red]{result.stderr.strip()}[/red]")
+
+    elif sub_cmd == "diff":
+        result = subprocess.run(
+            ["git", "diff", "--stat"], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip() or "(no changes)"
+            console.print(Panel(output, title="git diff --stat", border_style="yellow"))
+        else:
+            console.print(f"[red]{result.stderr.strip()}[/red]")
+
+    elif sub_cmd == "log":
+        result = subprocess.run(
+            ["git", "log", "--oneline", "-10"], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            console.print(Panel(result.stdout.strip(), title="git log", border_style="yellow"))
+        else:
+            console.print(f"[red]{result.stderr.strip()}[/red]")
+
+    elif sub_cmd == "commit":
+        # AI-assisted commit: stage all changes, generate message
+        if not sub_arg:
+            # Show what would be committed
+            status = subprocess.run(
+                ["git", "status", "--short"], capture_output=True, text=True, timeout=10
+            )
+            diff = subprocess.run(
+                ["git", "diff", "--cached", "--stat"], capture_output=True, text=True, timeout=10
+            )
+            console.print(
+                "[dim]Usage: /git commit <message>[/dim]\n"
+                "[dim]Tip: Stage files with 'git add' first, then use /git commit <msg>[/dim]"
+            )
+            if status.stdout.strip():
+                console.print(Panel(status.stdout.strip(), title="Unstaged/staged files"))
+        else:
+            # Commit with the given message
+            result = subprocess.run(
+                ["git", "commit", "-m", sub_arg],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                console.print(f"[green]{result.stdout.strip()}[/green]")
+            else:
+                console.print(f"[red]{result.stderr.strip()}[/red]")
+
+    else:
+        console.print(
+            "[dim]Git sub-commands: status, diff, log, commit <msg>[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -69,8 +69,10 @@ class TestEstimateTokens:
             }
         ]
         tokens = ContextCompressor.estimate_tokens(msgs)
-        # "ok" = 2 + 4 overhead + 100 args = 106 chars → 106 // 4 = 26
-        assert tokens == 26
+        # "ok" = 2 + 4 overhead = 6 chars (plain text, cpt=4) → 6 // 4 = 1
+        # args "aaa..." = 100 chars (JSON ratio, cpt=2) → 100 // 2 = 50
+        # total = 1 + 50 = 51
+        assert tokens == 51
 
     def test_none_content(self):
         msgs = [{"role": "assistant", "content": None}]

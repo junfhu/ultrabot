@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 from loguru import logger
 
 from ultrabot.agent.prompts import build_expert_system_prompt, build_system_prompt
+from ultrabot.agent.context_compressor import ContextCompressor
 from ultrabot.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
@@ -118,11 +119,13 @@ class Agent:
 
             messages = self._prepare_messages(session, expert_persona=expert_persona)
 
-            # Call the LLM provider.
-            response = await self._provider.chat_stream_with_retry(
+            # Call the LLM provider (with reactive compact on prompt-too-long).
+            response = await self._chat_with_reactive_compact(
                 messages=messages,
                 tools=tool_defs if tool_defs else None,
                 on_content_delta=on_content_delta,
+                session=session,
+                expert_persona=expert_persona,
             )
 
             # The provider should return an object with .content and .tool_calls.
@@ -172,6 +175,54 @@ class Agent:
         session.trim(max_tokens=context_window)
 
         return final_content
+
+    # ------------------------------------------------------------------
+    # Reactive compact wrapper
+    # ------------------------------------------------------------------
+
+    _MAX_REACTIVE_RETRIES = 3
+
+    async def _chat_with_reactive_compact(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        on_content_delta: ContentDeltaCB,
+        session: Any,
+        expert_persona: "ExpertPersona | None" = None,
+    ) -> Any:
+        """Call the LLM provider and retry with reactive compact on
+        prompt-too-long errors (413 / context_length_exceeded).
+
+        On each retry, drops ~20% of the oldest non-system messages and
+        rebuilds the message list.
+        """
+        current_messages = messages
+        for attempt in range(self._MAX_REACTIVE_RETRIES + 1):
+            try:
+                return await self._provider.chat_stream_with_retry(
+                    messages=current_messages,
+                    tools=tools,
+                    on_content_delta=on_content_delta,
+                )
+            except Exception as exc:
+                if (
+                    attempt < self._MAX_REACTIVE_RETRIES
+                    and ContextCompressor.is_prompt_too_long_error(exc)
+                ):
+                    before = len(current_messages)
+                    current_messages = ContextCompressor.reactive_compact(current_messages)
+                    after = len(current_messages)
+                    logger.warning(
+                        "Prompt too long (attempt {}/{}): dropped {} messages "
+                        "({} → {}). Retrying…",
+                        attempt + 1,
+                        self._MAX_REACTIVE_RETRIES,
+                        before - after,
+                        before,
+                        after,
+                    )
+                    continue
+                raise
 
     # ------------------------------------------------------------------
     # Tool execution
@@ -261,12 +312,17 @@ class Agent:
         expert_persona: "ExpertPersona | None" = None,
     ) -> list[dict[str, Any]]:
         """Build the full message list to send to the LLM, including the
-        system prompt as the first message."""
+        system prompt as the first message.
+
+        Applies microcompact to clear old tool outputs before sending.
+        """
         system_msg = {
             "role": "system",
             "content": self._build_system_prompt(expert_persona=expert_persona),
         }
-        return [system_msg] + session.get_messages()
+        messages = [system_msg] + session.get_messages()
+        # Microcompact: clear old tool outputs (zero-cost, no LLM call)
+        return ContextCompressor.microcompact(messages)
 
     @staticmethod
     def _build_user_message(

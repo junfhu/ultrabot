@@ -10,6 +10,7 @@ async-first, dependency-light architecture.
 """
 
 import logging
+import re
 from typing import Optional
 
 from ultrabot.agent.auxiliary import AuxiliaryClient
@@ -18,6 +19,25 @@ logger = logging.getLogger(__name__)
 
 # Chars-per-token rough estimate (widely used heuristic)
 _CHARS_PER_TOKEN = 4
+
+# File-type-aware chars-per-token ratios
+_FILETYPE_CHARS_PER_TOKEN: dict[str, int] = {
+    "json": 2,
+    "xml": 3,
+    "html": 3,
+    "htm": 3,
+    "svg": 3,
+    "xhtml": 3,
+    "yaml": 3,
+    "yml": 3,
+    "toml": 3,
+    "csv": 3,
+    "tsv": 3,
+}
+
+# Patterns used to detect structured content (no file extension needed)
+_JSON_PREFIX_RE = re.compile(r'^\s*[\[{"]')
+_XML_PREFIX_RE = re.compile(r'^\s*<[!?a-zA-Z]')
 
 # Default threshold: compress when estimated tokens exceed this fraction
 # of the context limit
@@ -29,6 +49,12 @@ _MAX_TOOL_RESULT_CHARS = 3000
 # Placeholder for pruned tool output
 _PRUNED_TOOL_PLACEHOLDER = "[Tool output truncated to save context space]"
 
+# How many recent tool results to keep full content for in microcompact
+_MICROCOMPACT_KEEP_LAST = 5
+
+# Placeholder for microcompacted tool output
+_MICROCOMPACT_PLACEHOLDER = "[Tool output cleared to save context — re-run if needed]"
+
 # Summary message prefix so the model knows the context was compressed
 SUMMARY_PREFIX = (
     "[CONTEXT COMPACTION] Earlier turns in this conversation were compacted "
@@ -36,13 +62,17 @@ SUMMARY_PREFIX = (
     "already completed. Use it to continue without repeating work:"
 )
 
-# Structured template the LLM is asked to fill out
+# Structured template the LLM is asked to fill out (9-section)
 _SUMMARY_TEMPLATE = """\
 ## Conversation Summary
 **Goal:** [what the user is trying to accomplish]
-**Progress:** [what has been done so far]
-**Key Decisions:** [important choices made]
-**Files Modified:** [files touched, if any]
+**Progress:** [what has been done so far — be specific with steps/commands]
+**Key Decisions:** [important choices made and their rationale]
+**Key Technical Concepts:** [APIs, protocols, patterns, data structures encountered]
+**Files Modified:** [files touched, created, or deleted — include paths]
+**Errors & Fixes:** [errors encountered and how they were resolved]
+**Problem-Solving Notes:** [approaches tried, dead ends, and what worked]
+**User Messages (verbatim):** [preserve ALL user messages exactly as typed]
 **Next Steps:** [what remains to be done]"""
 
 _SUMMARIZE_SYSTEM_PROMPT = f"""\
@@ -94,24 +124,52 @@ class ContextCompressor:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def estimate_tokens(messages: list[dict]) -> int:
-        """Rough token estimate: total chars / 4.
+    def _chars_per_token_for_content(content: str) -> int:
+        """Infer a chars-per-token ratio based on the content structure.
 
-        Counts the ``content`` field of each message plus a small overhead
-        per message for role/structure tokens.
+        JSON tokenises very densely (~2 chars/token), XML/HTML is
+        moderately dense (~3 chars/token), and natural text is ~4.
+        """
+        if not content:
+            return _CHARS_PER_TOKEN
+
+        # Fast heuristic: check the first 200 chars
+        prefix = content[:200]
+        if _JSON_PREFIX_RE.match(prefix):
+            return _FILETYPE_CHARS_PER_TOKEN["json"]
+        if _XML_PREFIX_RE.match(prefix):
+            return _FILETYPE_CHARS_PER_TOKEN["xml"]
+        return _CHARS_PER_TOKEN
+
+    @staticmethod
+    def estimate_tokens(messages: list[dict]) -> int:
+        """Rough token estimate with file-type-aware heuristics.
+
+        Counts the ``content`` field of each message using a per-content
+        chars-per-token ratio, plus a small overhead per message for
+        role/structure tokens.
         """
         if not messages:
             return 0
-        total_chars = 0
+        total = 0
         for msg in messages:
             content = msg.get("content") or ""
-            total_chars += len(content) + 4  # ~4 chars overhead per message
-            # Account for tool_calls arguments
+            cpt = ContextCompressor._chars_per_token_for_content(content)
+            total += (len(content) + 4) // cpt  # ~4 chars overhead per message
+            # Account for tool_calls arguments (JSON, so 2 chars/token)
             for tc in msg.get("tool_calls", []):
                 if isinstance(tc, dict):
                     args = tc.get("function", {}).get("arguments", "")
-                    total_chars += len(args)
-        return total_chars // _CHARS_PER_TOKEN
+                    total += len(args) // _FILETYPE_CHARS_PER_TOKEN["json"]
+        return total
+
+    @staticmethod
+    def estimate_tokens_for_content(content: str) -> int:
+        """Estimate tokens for a single content string with type awareness."""
+        if not content:
+            return 0
+        cpt = ContextCompressor._chars_per_token_for_content(content)
+        return max(len(content) // cpt, 1)
 
     # ------------------------------------------------------------------
     # Should-compress check
@@ -152,6 +210,49 @@ class ContextCompressor:
                     original[:max_chars] + f"\n...{_PRUNED_TOOL_PLACEHOLDER}"
                 )
                 result.append(truncated)
+            else:
+                result.append(msg)
+        return result
+
+    # ------------------------------------------------------------------
+    # Microcompact: clear old tool outputs (cheap, no LLM call)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def microcompact(
+        messages: list[dict],
+        keep_last: int = _MICROCOMPACT_KEEP_LAST,
+    ) -> list[dict]:
+        """Clear tool-result content from all but the last *keep_last* tool messages.
+
+        This is a zero-cost optimisation that runs before every LLM call to
+        prevent stale tool outputs from consuming context tokens.  The
+        tool-result messages are kept in place (to maintain tool_call /
+        tool_result pairing) but their ``content`` is replaced with a
+        short placeholder.
+
+        Returns a **new** list; the original messages are not mutated.
+        """
+        if not messages:
+            return []
+
+        # Identify indices of tool-result messages
+        tool_indices = [
+            i for i, m in enumerate(messages) if m.get("role") == "tool"
+        ]
+
+        if len(tool_indices) <= keep_last:
+            return list(messages)
+
+        # Indices to clear (all except the last *keep_last*)
+        clear_indices = set(tool_indices[:-keep_last])
+
+        result: list[dict] = []
+        for i, msg in enumerate(messages):
+            if i in clear_indices:
+                cleared = msg.copy()
+                cleared["content"] = _MICROCOMPACT_PLACEHOLDER
+                result.append(cleared)
             else:
                 result.append(msg)
         return result
@@ -274,3 +375,80 @@ class ContextCompressor:
         }
 
         return head + [summary_message] + tail
+
+    # ------------------------------------------------------------------
+    # Reactive compact (413 recovery)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def reactive_compact(
+        messages: list[dict],
+        drop_fraction: float = 0.20,
+    ) -> list[dict]:
+        """Emergency context reduction: drop the oldest messages.
+
+        Called when the API returns a 413 / prompt-too-long error.  Drops
+        approximately *drop_fraction* of the non-system messages from the
+        front of the conversation while respecting tool_use/tool_result
+        pairs (never leaves an orphan tool result without its
+        corresponding assistant tool_call or vice versa).
+
+        Returns a new list; the original is not mutated.
+        """
+        if not messages:
+            return []
+
+        # Separate system messages (always kept) from the rest
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
+
+        if not non_system:
+            return list(messages)
+
+        # How many non-system messages to drop
+        drop_count = max(1, int(len(non_system) * drop_fraction))
+
+        # Expand drop_count forward to avoid orphaning a tool_result
+        while drop_count < len(non_system):
+            candidate = non_system[drop_count]
+            if candidate.get("role") == "tool":
+                drop_count += 1
+            else:
+                break
+
+        # Also check backwards: if the last kept message is an assistant
+        # with tool_calls, we need to keep its tool results too — but
+        # those were already after the cut, so they're kept. The concern
+        # is if we leave a tool result at the boundary pointing back
+        # to a dropped assistant. The forward scan above handles that.
+
+        surviving = non_system[drop_count:]
+        return system_msgs + surviving
+
+    # ------------------------------------------------------------------
+    # Prompt-too-long error detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def is_prompt_too_long_error(exc: BaseException) -> bool:
+        """Return True when *exc* indicates the prompt exceeded the model's
+        context window (HTTP 413, or provider-specific error messages)."""
+        status: int | None = getattr(exc, "status_code", None) or getattr(
+            exc, "status", None
+        )
+        if status == 413:
+            return True
+
+        msg = str(exc).lower()
+        markers = (
+            "prompt is too long",
+            "maximum context length",
+            "context_length_exceeded",
+            "request too large",
+            "max_tokens",
+            "token limit",
+            "context window",
+            "input is too long",
+            "reduce the length",
+        )
+        return any(m in msg for m in markers)

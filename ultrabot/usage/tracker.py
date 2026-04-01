@@ -160,16 +160,27 @@ class UsageTracker:
     Parameters:
         data_dir: Directory for persisting usage data. If None, in-memory only.
         max_records: Maximum records to keep in memory (FIFO eviction).
+        budget_usd: Optional daily budget in USD. When exceeded, ``over_budget``
+            returns True and an alert message is included in summaries.
     """
 
-    def __init__(self, data_dir: Path | None = None, max_records: int = 10000) -> None:
+    def __init__(
+        self,
+        data_dir: Path | None = None,
+        max_records: int = 10000,
+        budget_usd: float = 0.0,
+    ) -> None:
         self._data_dir = data_dir
         self._max_records = max_records
+        self._budget_usd = budget_usd
         self._records: list[UsageRecord] = []
 
         # Running totals
         self._total_tokens = 0
         self._total_cost = 0.0
+        self._total_cache_read = 0
+        self._total_cache_write = 0
+        self._total_input = 0
         self._by_provider: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0, "cost": 0.0})
         self._by_model: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0, "cost": 0.0})
         self._by_session: dict[str, dict[str, float]] = defaultdict(lambda: {"tokens": 0, "cost": 0.0})
@@ -222,6 +233,9 @@ class UsageTracker:
         # Update running totals
         self._total_tokens += record.total_tokens
         self._total_cost += record.cost_usd
+        self._total_cache_read += record.cache_read_tokens
+        self._total_cache_write += record.cache_write_tokens
+        self._total_input += record.input_tokens
         self._by_provider[provider]["tokens"] += record.total_tokens
         self._by_provider[provider]["cost"] += record.cost_usd
         self._by_model[model]["tokens"] += record.total_tokens
@@ -249,17 +263,46 @@ class UsageTracker:
         return record
 
     def get_summary(self) -> dict[str, Any]:
-        """Return a full usage summary."""
-        return {
+        """Return a full usage summary including cache hit rate and budget info."""
+        # Cache hit rate: what fraction of input tokens were served from cache
+        cache_hit_rate = 0.0
+        total_input_with_cache = self._total_input + self._total_cache_read
+        if total_input_with_cache > 0:
+            cache_hit_rate = self._total_cache_read / total_input_with_cache
+
+        summary: dict[str, Any] = {
             "total_tokens": self._total_tokens,
             "total_cost_usd": round(self._total_cost, 6),
             "total_calls": len(self._records),
+            "cache_read_tokens": self._total_cache_read,
+            "cache_write_tokens": self._total_cache_write,
+            "cache_hit_rate": round(cache_hit_rate, 4),
             "by_provider": dict(self._by_provider),
             "by_model": dict(self._by_model),
             "by_session": dict(self._by_session),
             "daily": dict(self._daily),
             "tool_usage": dict(self._tool_usage),
         }
+
+        # Budget info
+        if self._budget_usd > 0:
+            today = date.today().isoformat()
+            today_cost = self._daily.get(today, {}).get("cost", 0)
+            summary["budget_usd"] = self._budget_usd
+            summary["today_cost_usd"] = round(today_cost, 6)
+            summary["budget_remaining_usd"] = round(max(0, self._budget_usd - today_cost), 6)
+            summary["over_budget"] = today_cost >= self._budget_usd
+
+        return summary
+
+    @property
+    def over_budget(self) -> bool:
+        """Return True if today's spending exceeds the daily budget."""
+        if self._budget_usd <= 0:
+            return False
+        today = date.today().isoformat()
+        today_cost = self._daily.get(today, {}).get("cost", 0)
+        return today_cost >= self._budget_usd
 
     def get_session_summary(self, session_key: str) -> dict[str, Any]:
         """Return usage summary for a specific session."""
