@@ -12,8 +12,8 @@
 
 - **pyenv**（Python 版本管理器）—— 本指南全程使用
 - **Python 3.12**（通过 pyenv 安装）
-- **一个 OpenAI 兼容的 API 密钥**（OpenAI、DeepSeek 或任何兼容提供者）
-- **一个文本编辑器**（VS Code、PyCharm、vim —— 什么都行）
+- **一个 OpenAI 兼容的 API 密钥**（OpenAI、DeepSeek 或任何兼容提供者，目前暂时推荐火山引擎lite版本，可以使用我的邀请码获取9折优惠 https://volcengine.com/L/_01BJCkKdMc/  邀请码：HHCDB4J4）
+- **一个文本编辑器**（VS Code、PyCharm、vim —— 什么都行，目前推荐VS Code）
 
 就这些。不需要构建工具，不需要包管理器，不需要框架。只有当你需要时，我们才会增加复杂度。
 
@@ -47,6 +47,21 @@ eval "$(pyenv init -)"
 pyenv install 3.12
 pyenv global 3.12
 python --version  # Python 3.12.x
+```
+
+针对不同系统，有可能需要安装一些额外的包，需要自动问其他AI，我的Ubuntu如下
+```bash
+sudo apt update
+sudo apt install -y make build-essential libssl-dev zlib1g-dev \
+libbz2-dev libreadline-dev libsqlite3-dev curl \
+libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev \
+liblzma-dev git
+# 安装更多编译依赖
+sudo apt install -y pkg-config
+sudo apt install -y libgdbm-dev libnss3-dev
+sudo apt install -y libssl-dev libffi-dev
+sudo apt install -y libbz2-dev libreadline-dev libsqlite3-dev
+sudo apt install -y libncurses5-dev libncursesw5-dev liblzma-dev
 ```
 
 ## 如何使用本指南
@@ -160,13 +175,18 @@ export OPENAI_API_KEY="sk-..."
 # export OPENAI_BASE_URL="https://api.deepseek.com"  # DeepSeek
 # export OPENAI_BASE_URL="http://localhost:11434/v1"  # Ollama
 # export MODEL="deepseek-chat"                        # 默认：gpt-4o-mini
+
+export OPENAI_BASE_URL="https://ark.cn-beijing.volces.com/api/coding/v3"
+export MODEL="minimax-m2.5"
+export OPENAI_API_KEY="sk-..."
+
 ```
 
 | 环境变量 | 用途 | 默认值 |
 |---------|------|--------|
 | `OPENAI_API_KEY` | 提供者的 API 密钥 | *（必需）* |
-| `OPENAI_BASE_URL` | 提供者的基础 URL | `https://api.openai.com/v1` |
-| `MODEL` | 使用的模型名称 | `gpt-4o-mini` |
+| `OPENAI_BASE_URL` | 提供者的基础 URL | `https://ark.cn-beijing.volces.com/api/coding/v3` |
+| `MODEL` | 使用的模型名称 | `minimax-m2.5` |
 
 翻到下一页。
 # UltraBot 开发者指南 —— 第 1 部分（课程 1-8）
